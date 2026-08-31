@@ -16,6 +16,7 @@ use crate::config::{JOINT_SPRING_DAMPING_RATIO, JOINT_SPRING_FREQUENCY};
 use crate::groups::ROPE_GROUP;
 use crate::scene::{LevelColliderID, PhysicsScene, SableSceneData, SimulationSceneData};
 use crate::with_handle;
+use crate::floating_origin;
 
 const MIN_BOUND_STIFFNESS: Real = 150.0;
 const MIN_BOUND_DAMPING: Real = 10.0;
@@ -42,12 +43,41 @@ pub struct RopeMap {
     ropes: HashMap<usize, RopeStrand>,
 }
 
+impl RopeMap {
+    /// Iterates every rope point body handle in the map.
+    pub fn point_handles(&self) -> impl Iterator<Item = RigidBodyHandle> + '_ {
+        self.ropes
+            .values()
+            .flat_map(|strand| strand.points.iter().copied())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_strand_for_test(&mut self, points: Vec<RigidBodyHandle>) -> usize {
+        self.counting_id += 1;
+        let id = self.counting_id;
+        self.ropes.insert(
+            id,
+            RopeStrand {
+                points,
+                joints: Vec::new(),
+                point_radius: 0.1,
+                first_joint_length: 1.0,
+                start_attachment: None,
+                end_attachment: None,
+            },
+        );
+        id
+    }
+}
+
 pub fn tick(scene: &PhysicsScene) {
     let mut sable_data = scene.sable_data.write().unwrap();
     let mut sim = scene.sim_data.write().unwrap();
 
     let mut dead_start_attachments = Vec::new();
     let mut dead_end_attachments = Vec::new();
+    let origin = sable_data.origin;
+
 
     for (id, rope) in sable_data.rope_map.ropes.iter() {
         if let Some(attachment) = &rope.start_attachment {
@@ -59,7 +89,7 @@ pub fn tick(scene: &PhysicsScene) {
                         let rb_b = &sable_data.level_colliders[&id_b];
                         rb_b.center_of_mass.unwrap()
                     } else {
-                        DVec3::ZERO
+                        origin
                     };
 
                 let impulse_joint = sim
@@ -79,7 +109,7 @@ pub fn tick(scene: &PhysicsScene) {
                         let rb_b = &sable_data.level_colliders[&id_b];
                         rb_b.center_of_mass.unwrap()
                     } else {
-                        DVec3::ZERO
+                        origin
                     };
 
                 let impulse_joint = sim
@@ -117,19 +147,33 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     let mut coordinates = vec![0.0; (num_points * 3) as usize];
     env.get_double_array_region(points, 0, &mut coordinates)
         .unwrap();
+    with_handle(handle, |scene| {
+        for i in 0..(num_points as usize) {
+            floating_origin::ensure_origin_near(
+                scene,
+                &DVec3::new(
+                    coordinates[i * 3],
+                    coordinates[i * 3 + 1],
+                    coordinates[i * 3 + 2],
+                ),
+            );
+        }
+    });
 
     with_handle(handle, |scene| {
         let mut sim_data = scene.sim_data.write().unwrap();
         let mut sable_data = scene.sable_data.write().unwrap();
         let universal_drag = scene.universal_drag;
+        let origin = sable_data.origin;
 
         let mut vec = Vec::with_capacity(num_points as usize);
         for i in 0..(num_points as usize) {
-            let coordinate = Vec3::new(
-                coordinates[i * 3] as Real,
-                coordinates[i * 3 + 1] as Real,
-                coordinates[i * 3 + 2] as Real,
+            let w = DVec3::new(
+                coordinates[i * 3],
+                coordinates[i * 3 + 1],
+                coordinates[i * 3 + 2],
             );
+            let coordinate = (w - origin).as_vec3();
 
             let handle = create_rope_body(
                 &mut sim_data,
@@ -253,7 +297,7 @@ fn create_rope_body(
     handle
 }
 
-/// Removes a rope
+/// Queries rope point world positions
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_queryRope<'local>(
     env: JNIEnv<'local>,
@@ -266,6 +310,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_que
         let sim_data = scene.sim_data.read().unwrap();
 
         let strand = sable_data.rope_map.ropes.get(&(id as usize)).unwrap();
+        let origin = sable_data.origin;
 
         let flattened: Vec<jdouble> = strand
             .points
@@ -277,7 +322,11 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_que
                     .unwrap()
                     .position()
                     .translation;
-                vec![pos.x as f64, pos.y as f64, pos.z as f64]
+                vec![
+                    pos.x as f64 + origin.x,
+                    pos.y as f64 + origin.y,
+                    pos.z as f64 + origin.z,
+                ]
             })
             .collect();
 
@@ -410,10 +459,14 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_add
     y: jdouble,
     z: jdouble,
 ) {
+    let w = DVec3::new(x, y, z);
+    with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
+
     with_handle(handle, |scene| {
         let mut sim_data = scene.sim_data.write().unwrap();
         let mut sable_data = scene.sable_data.write().unwrap();
         let universal_drag = scene.universal_drag;
+        let origin = sable_data.origin;
 
         let strand = sable_data.rope_map.ropes.get_mut(&(id as usize)).unwrap();
         let point_radius = strand.point_radius;
@@ -430,7 +483,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_add
         let handle = create_rope_body(
             &mut sim_data,
             universal_drag,
-            Vec3::new(x as Real, y as Real, z as Real),
+            (w - origin).as_vec3(),
             point_radius,
         );
         strand.joints.insert(

@@ -47,6 +47,21 @@ impl SableJointSet {
     }
 }
 
+fn joint_side_com(
+    id: Option<LevelColliderID>,
+    colliders: &std::collections::HashMap<LevelColliderID, crate::ActiveLevelColliderInfo>,
+    origin: DVec3,
+) -> DVec3 {
+    match id {
+        None => origin,
+        Some(id) => colliders
+            .get(&id)
+            .and_then(|rb| rb.center_of_mass)
+            .unwrap_or(DVec3::ZERO),
+    }
+}
+
+
 pub fn tick(scene: &PhysicsScene) {
     let mut sable_data = scene.sable_data.write().unwrap();
     let mut sim = scene.sim_data.write().unwrap();
@@ -57,6 +72,8 @@ pub fn tick(scene: &PhysicsScene) {
         .joints
         .retain(|_handle, joint| sim.impulse_joint_set.contains(joint.handle));
 
+    let origin = sable_data.origin;
+
     // update every joint
     for (_handle, joint) in sable_data.joint_set.joints.iter() {
         let impulse_joint = sim.impulse_joint_set.get_mut(joint.handle, false).unwrap();
@@ -65,13 +82,8 @@ pub fn tick(scene: &PhysicsScene) {
             impulse_joint.data.set_local_axis1(joint.normal_a.as_vec3());
         }
 
-        let center_of_mass_1 = if let Some(id_a) = joint.id_a
-            && let Some(rb_a) = sable_data.level_colliders.get(&id_a)
-        {
-            rb_a.center_of_mass.unwrap()
-        } else {
-            DVec3::ZERO
-        };
+        let center_of_mass_1 =
+            joint_side_com(joint.id_a, &sable_data.level_colliders, origin);
 
         let local_anchor_1 = joint.pos_a - center_of_mass_1;
         impulse_joint
@@ -81,13 +93,8 @@ pub fn tick(scene: &PhysicsScene) {
             impulse_joint.data.set_local_axis2(joint.normal_b.as_vec3());
         }
 
-        let center_of_mass_2 = if let Some(id_b) = joint.id_b
-            && let Some(rb_b) = sable_data.level_colliders.get(&id_b)
-        {
-            rb_b.center_of_mass.unwrap()
-        } else {
-            DVec3::ZERO
-        };
+        let center_of_mass_2 =
+            joint_side_com(joint.id_b, &sable_data.level_colliders, origin);
 
         let local_anchor_2 = joint.pos_b - center_of_mass_2;
         impulse_joint
@@ -717,4 +724,47 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
             _ => panic!("Invalid constraint frame side: {}", side),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::joint_side_com;
+    use crate::scene::LevelColliderID;
+    use crate::ActiveLevelColliderInfo;
+    use rapier3d::glamx::DVec3;
+    use rapier3d::prelude::ColliderHandle;
+    use std::collections::HashMap;
+
+    #[test]
+    fn joint_side_com_ground_uses_origin() {
+        let origin = DVec3::new(40000.0, 64.0, 40000.0);
+        let colliders = HashMap::new();
+        assert_eq!(joint_side_com(None, &colliders, origin), origin);
+    }
+
+    #[test]
+    fn joint_side_com_box_without_collider_stays_zero() {
+        let origin = DVec3::new(40000.0, 64.0, 40000.0);
+        let colliders = HashMap::new();
+        // Simurail pivot: id=Some, not in level_colliders
+        let id: Option<LevelColliderID> = Some(7);
+        assert_eq!(
+            joint_side_com(id, &colliders, origin),
+            DVec3::ZERO
+        );
+        // pos_b = ZERO → local_anchor = ZERO - ZERO = ZERO, not -origin
+        let local_anchor = DVec3::ZERO - joint_side_com(id, &colliders, origin);
+        assert_eq!(local_anchor, DVec3::ZERO);
+    }
+
+    #[test]
+    fn joint_side_com_sublevel_uses_center_of_mass() {
+        let origin = DVec3::new(40000.0, 64.0, 40000.0);
+        let com = DVec3::new(10.0, 2.0, 3.0);
+        let mut info = ActiveLevelColliderInfo::new(ColliderHandle::invalid());
+        info.center_of_mass = Some(com);
+        let mut colliders = HashMap::new();
+        colliders.insert(1, info);
+        assert_eq!(joint_side_com(Some(1), &colliders, origin), com);
+    }
 }

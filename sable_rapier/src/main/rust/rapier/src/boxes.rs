@@ -4,10 +4,10 @@ use jni::sys::{jdouble, jint, jlong};
 use marten::Real;
 use rapier3d::dynamics::RigidBodyBuilder;
 use rapier3d::geometry::{ColliderBuilder, SharedShape};
-use rapier3d::glamx::Quat;
-use rapier3d::math::Vec3;
+use rapier3d::glamx::{DVec3, Quat};
 
 use crate::scene::LevelColliderID;
+use crate::floating_origin;
 use crate::with_handle;
 
 #[unsafe(no_mangle)]
@@ -32,17 +32,17 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
         pose_arr[6] as Real,
     );
 
-    let mut rigid_body = RigidBodyBuilder::dynamic()
-        .ccd_enabled(true)
-        .translation(Vec3::new(
-            pose_arr[0] as Real,
-            pose_arr[1] as Real,
-            pose_arr[2] as Real,
-        ))
-        .build();
-    rigid_body.set_rotation(quat, false);
+    let w = DVec3::new(pose_arr[0], pose_arr[1], pose_arr[2]);
+    with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
 
     with_handle(handle, |scene| {
+        let t = (w - scene.sable_data.read().unwrap().origin).as_vec3();
+        let mut rigid_body = RigidBodyBuilder::dynamic()
+            .ccd_enabled(true)
+            .translation(t)
+            .build();
+        rigid_body.set_rotation(quat, false);
+
         let mut sim_data = scene.sim_data.write().unwrap();
         let sim_data = &mut *sim_data;
         let mut sable_data = scene.sable_data.write().unwrap();

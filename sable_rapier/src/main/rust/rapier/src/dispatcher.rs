@@ -259,7 +259,7 @@ impl SableDispatcher {
         let collider_info = g1
             .id
             .map(|id| &sable_data.level_colliders[&(id as LevelColliderID)]);
-        let center_of_mass_1 = collider_info.map_or(DVec3::ZERO, |b| b.center_of_mass.unwrap());
+        let center_of_mass_1 = collider_info.map_or(sable_data.origin, |b| b.center_of_mass.unwrap());
 
         let mut local_aabb = g2.compute_aabb(pos12);
 
@@ -445,7 +445,7 @@ impl SableDispatcher {
             .id
             .map(|id| &sable_data.level_colliders[&(id as LevelColliderID)]);
         let collider_info_2 = &sable_data.level_colliders[&(g2.id.unwrap() as LevelColliderID)];
-        let center_of_mass_1 = collider_info_1.map_or(DVec3::ZERO, |b| b.center_of_mass.unwrap());
+        let center_of_mass_1 = collider_info_1.map_or(sable_data.origin, |b| b.center_of_mass.unwrap());
         let center_of_mass_2 = collider_info_2.center_of_mass.unwrap();
 
         let chunk_access_1: &dyn ChunkAccess = if let Some(info) = collider_info_1

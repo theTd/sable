@@ -166,8 +166,17 @@ fn get_overlapping_nodes(
         min(log2, OCTREE_CHUNK_SHIFT)
     };
 
-    let min_block_pos = ((pos - dist).as_dvec3() + com_offset).floor().as_ivec3();
-    let max_block_pos = ((pos + dist).as_dvec3() + com_offset).floor().as_ivec3();
+    let origin = if other_handle.is_some() {
+        DVec3::ZERO
+    } else {
+        sable_data.origin
+    };
+    let min_block_pos = ((pos - dist).as_dvec3() + com_offset + origin)
+        .floor()
+        .as_ivec3();
+    let max_block_pos = ((pos + dist).as_dvec3() + com_offset + origin)
+        .floor()
+        .as_ivec3();
 
     if let Some(other_handle) = other_handle {
         let other_min = other_handle.local_bounds_min.unwrap();

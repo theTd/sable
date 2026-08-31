@@ -7,6 +7,7 @@ mod contraptions;
 mod dispatcher;
 mod event_handler;
 mod groups;
+mod floating_origin;
 mod hooks;
 mod joints;
 mod rope;
@@ -242,13 +243,13 @@ pub struct PhysicsState {
 /// A collision to report to the Java side.
 #[derive(Debug, Clone)]
 pub struct ReportedCollision {
-    body_a: Option<LevelColliderID>,
-    body_b: Option<LevelColliderID>,
-    local_point_a: DVec3,
-    local_point_b: DVec3,
-    local_normal_a: DVec3,
-    local_normal_b: DVec3,
-    force_amount: f64,
+    pub(crate) body_a: Option<LevelColliderID>,
+    pub(crate) body_b: Option<LevelColliderID>,
+    pub(crate) local_point_a: DVec3,
+    pub(crate) local_point_b: DVec3,
+    pub(crate) local_normal_a: DVec3,
+    pub(crate) local_normal_b: DVec3,
+    pub(crate) force_amount: f64,
 }
 
 pub static PHYSICS_STATE: OnceLock<RwLock<PhysicsState>> = OnceLock::new();
@@ -402,6 +403,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ini
         rope_map: RopeMap::default(),
         level_colliders: HashMap::<LevelColliderID, ActiveLevelColliderInfo>::new(),
         rigid_bodies: HashMap::<LevelColliderID, RigidBodyHandle>::new(),
+        origin: DVec3::ZERO,
     }));
     let manifold_info_map = Arc::new(SableManifoldInfoMap::default());
     let reported_collisions = Arc::new(ReportedCollisionBuffer::new());
@@ -518,6 +520,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_handle(handle, |scene| {
+            floating_origin::rebase_if_needed(scene);
             rope::tick(scene);
             joints::tick(scene);
 
@@ -566,9 +569,9 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_get
             &sim_data.rigid_body_set[sable_data.rigid_bodies[&(id as LevelColliderID)]];
 
         let arr: [jdouble; 7] = [
-            rb.translation().x as jdouble,
-            rb.translation().y as jdouble,
-            rb.translation().z as jdouble,
+            rb.translation().x as jdouble + sable_data.origin.x,
+            rb.translation().y as jdouble + sable_data.origin.y,
+            rb.translation().z as jdouble + sable_data.origin.z,
             rb.rotation().x as jdouble,
             rb.rotation().y as jdouble,
             rb.rotation().z as jdouble,
@@ -660,20 +663,20 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
         pose_arr[6] as Real,
     );
 
-    let mut rigid_body = RigidBodyBuilder::dynamic()
-        .ccd_enabled(true)
-        .translation(Vec3::new(
-            pose_arr[0] as Real,
-            pose_arr[1] as Real,
-            pose_arr[2] as Real,
-        ))
-        .build();
-    rigid_body.set_rotation(quat, false);
-    let activation_params = rigid_body.activation_mut();
-    activation_params.angular_threshold = 0.15;
-    activation_params.normalized_linear_threshold = 0.15;
+    let w = DVec3::new(pose_arr[0], pose_arr[1], pose_arr[2]);
+    with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
 
     with_handle(handle, |scene| {
+        let t = (w - scene.sable_data.read().unwrap().origin).as_vec3();
+        let mut rigid_body = RigidBodyBuilder::dynamic()
+            .ccd_enabled(true)
+            .translation(t)
+            .build();
+        rigid_body.set_rotation(quat, false);
+        let activation_params = rigid_body.activation_mut();
+        activation_params.angular_threshold = 0.15;
+        activation_params.normalized_linear_threshold = 0.15;
+
         rigid_body.set_linear_damping(scene.universal_drag);
         rigid_body.set_angular_damping(scene.universal_drag);
         rigid_body.enable_gyroscopic_forces(true);
@@ -1173,6 +1176,9 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_tel
     k: jdouble,
     r: jdouble,
 ) {
+    let w = DVec3::new(x, y, z);
+    with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
+
     with_handle(handle, |scene| {
         let sable_data = scene.sable_data.read().unwrap();
         let mut sim_data = scene.sim_data.write().unwrap();
@@ -1180,7 +1186,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_tel
         let rb = &mut sim_data.rigid_body_set[sable_data.rigid_bodies[&(id as LevelColliderID)]];
 
         let mut pose = *rb.position();
-        pose.translation = Vec3::new(x as Real, y as Real, z as Real);
+        pose.translation = (w - sable_data.origin).as_vec3();
         pose.rotation = Quat::from_xyzw(i as Real, j as Real, k as Real, r as Real);
         rb.set_position(pose, true);
     })
@@ -1255,6 +1261,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cle
     handle: jlong,
 ) -> JDoubleArray<'local> {
     let arr: Vec<jdouble> = with_handle(handle, |scene| {
+        let origin = scene.sable_data.read().unwrap().origin;
         let mut reported = scene.reported_collisions.borrow_mut();
 
         let max_collisions = 100;
@@ -1275,6 +1282,19 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cle
                 -1.0
             };
 
+            let pa = collision.local_point_a
+                + if collision.body_a.is_none() {
+                    origin
+                } else {
+                    DVec3::ZERO
+                };
+            let pb = collision.local_point_b
+                + if collision.body_b.is_none() {
+                    origin
+                } else {
+                    DVec3::ZERO
+                };
+
             arr.push(body_a);
             arr.push(body_b);
             arr.push(collision.force_amount as jdouble);
@@ -1284,12 +1304,12 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cle
             arr.push(collision.local_normal_b.x as jdouble);
             arr.push(collision.local_normal_b.y as jdouble);
             arr.push(collision.local_normal_b.z as jdouble);
-            arr.push(collision.local_point_a.x as jdouble);
-            arr.push(collision.local_point_a.y as jdouble);
-            arr.push(collision.local_point_a.z as jdouble);
-            arr.push(collision.local_point_b.x as jdouble);
-            arr.push(collision.local_point_b.y as jdouble);
-            arr.push(collision.local_point_b.z as jdouble);
+            arr.push(pa.x);
+            arr.push(pa.y);
+            arr.push(pa.z);
+            arr.push(pb.x);
+            arr.push(pb.y);
+            arr.push(pb.z);
         }
 
         reported.clear();

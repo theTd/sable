@@ -17,6 +17,8 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
     let sable_data = scene.sable_data.read().unwrap();
     let mut sim_data = scene.sim_data.write().unwrap();
 
+    let origin = sable_data.origin;
+
     for (id, body_handle) in sable_data.rigid_bodies.iter() {
         let info = sable_data.level_colliders.get(id);
 
@@ -66,10 +68,10 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
                         local_pos.y + y as Real * 0.25,
                         local_pos.z + z as Real * 0.25,
                     );
-                    do_drag(body, &vels, static_pos, &local_pos, 0.25, 1.0);
+                    do_drag(body, &vels, static_pos, &local_pos, 0.25, 1.0, origin);
                 }
             } else {
-                do_drag(body, &vels, static_pos, &local_pos, 0.5, 1.0);
+                do_drag(body, &vels, static_pos, &local_pos, 0.5, 1.0, origin);
             }
         }
         for (static_pos, dynamic_pos) in pairs.iter() {
@@ -125,6 +127,7 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
                         &local_pos,
                         0.25,
                         voxel_collider_data.volume,
+                        origin,
                     );
                 }
             } else {
@@ -134,6 +137,7 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
                     &local_pos,
                     0.5,
                     voxel_collider_data.volume,
+                    origin,
                 );
             }
         }
@@ -147,11 +151,13 @@ fn do_drag(
     point: &Vec3,
     size: Real,
     strength: Real,
+    origin: DVec3,
 ) {
     let point = body.position().transform_point(*point);
+    let static_o = (static_pos.as_dvec3() - origin).as_vec3();
 
     let overlap = Aabb::new(point - size, point + size)
-        .intersection(&Aabb::new(static_pos.as_vec3(), static_pos.as_vec3() + 1.0));
+        .intersection(&Aabb::new(static_o, static_o + 1.0));
 
     if overlap.is_none() {
         return;
@@ -163,21 +169,21 @@ fn do_drag(
     body.add_force_at_point(-velo * 1.7 * volume * strength, point, false);
 }
 
-fn do_float(body: &mut RigidBody, static_pos: &IVec3, point: &Vec3, size: Real, strength: Real) {
+fn do_float(
+    body: &mut RigidBody,
+    static_pos: &IVec3,
+    point: &Vec3,
+    size: Real,
+    strength: Real,
+    origin: DVec3,
+) {
     let point = body.position().transform_point(*point);
+    let static_o = (static_pos.as_dvec3() - origin).as_vec3();
 
     let overlap =
         Aabb::new(point - Vec3::splat(size), point + Vec3::splat(size)).intersection(&Aabb::new(
-            Vec3::new(
-                static_pos.x as Real,
-                static_pos.y as Real,
-                static_pos.z as Real,
-            ),
-            Vec3::new(
-                static_pos.x as Real + 1.0,
-                static_pos.y as Real + 1.0,
-                static_pos.z as Real + 1.0,
-            ),
+            static_o,
+            static_o + Vec3::splat(1.0),
         ));
 
     if overlap.is_none() {

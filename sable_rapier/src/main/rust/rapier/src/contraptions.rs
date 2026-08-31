@@ -15,6 +15,7 @@ use crate::collider::LevelCollider;
 use crate::groups::LEVEL_GROUP;
 use crate::scene::{LevelColliderID, SableSceneData};
 use crate::{ActiveLevelColliderInfo, with_handle};
+use crate::floating_origin;
 
 macro_rules! extract_jdouble_array {
     ($env:expr, $jarr:expr, $len:expr) => {{
@@ -124,11 +125,6 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
     let center_of_mass_arr = extract_jdouble_array!(env, center_of_mass, 3);
     let pose_arr = extract_jdouble_array!(env, pose, 7);
     let velocities_arr = extract_jdouble_array!(env, velocities, 6);
-    let translation = Vec3::new(
-        pose_arr[0] as Real,
-        pose_arr[1] as Real,
-        pose_arr[2] as Real,
-    );
     let quat = Quat::from_xyzw(
         pose_arr[3] as Real,
         pose_arr[4] as Real,
@@ -136,10 +132,25 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
         pose_arr[6] as Real,
     );
 
+    // 第一段：仅 static_mount 时做 f64 闭环
+    with_handle(handle, |scene| {
+        let sable = scene.sable_data.read().unwrap();
+        if sable
+            .level_colliders
+            .get(&(id as LevelColliderID))
+            .is_some_and(|i| i.static_mount.is_some())
+        {
+            let w = DVec3::new(pose_arr[0], pose_arr[1], pose_arr[2]);
+            drop(sable);
+            floating_origin::ensure_origin_near(scene, &w);
+        }
+    });
+
     with_handle(handle, |scene| {
         let mut sim_data = scene.sim_data.write().unwrap();
         let mut sable_data = scene.sable_data.write().unwrap();
 
+        let origin = sable_data.origin;
         let info = get_kinematic_collider_info(&mut sable_data, id);
         let collider_handle = info.collider;
 
@@ -148,6 +159,12 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
         if collider.is_none() {
             return;
         }
+
+        let translation = if info.static_mount.is_some() {
+            (DVec3::new(pose_arr[0], pose_arr[1], pose_arr[2]) - origin).as_vec3()
+        } else {
+            Vec3::new(pose_arr[0] as Real, pose_arr[1] as Real, pose_arr[2] as Real)
+        };
 
         let isometry = Pose3 {
             rotation: quat,

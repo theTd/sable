@@ -171,7 +171,7 @@ impl SablePhysicsHooks {
                 ));
             }
 
-            let center_of_mass = collider_info.map_or(DVec3::ZERO, |b| b.center_of_mass.unwrap());
+            let center_of_mass = collider_info.map_or(sable_data.origin, |b| b.center_of_mass.unwrap());
             let skip_contact_events = collider_info.is_some_and(|info| info.has_own_chunks());
 
             (tangent_velo, center_of_mass, skip_contact_events)

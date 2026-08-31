@@ -11,7 +11,7 @@ use rapier3d::dynamics::{
     CCDSolver, ImpulseJointSet, IslandManager, MultibodyJointSet, RigidBodyHandle, RigidBodySet,
 };
 use rapier3d::geometry::{ColliderSet, DefaultBroadPhase, NarrowPhase};
-use rapier3d::glamx::IVec3;
+use rapier3d::glamx::{DVec3, IVec3};
 use rapier3d::math::Vec3;
 use rapier3d::pipeline::PhysicsPipeline;
 use std::cell::RefCell;
@@ -49,6 +49,19 @@ impl ReportedCollisionBuffer {
     pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<ReportedCollision>> {
         self.0.borrow_mut()
     }
+
+    /// 把缓冲里 ground 侧 local_point 从旧 O 帧平移到新 O 帧（减 c）。
+    /// rebase 发生在碰撞记录与 clearCollisions 之间时保持世界坐标不变。
+    pub fn rebase_ground_points(&self, c: DVec3) {
+        for collision in self.0.borrow_mut().iter_mut() {
+            if collision.body_a.is_none() {
+                collision.local_point_a -= c;
+            }
+            if collision.body_b.is_none() {
+                collision.local_point_b -= c;
+            }
+        }
+    }
 }
 
 impl Default for ReportedCollisionBuffer {
@@ -85,6 +98,8 @@ pub struct SableSceneData {
 
     pub level_colliders: HashMap<LevelColliderID, ActiveLevelColliderInfo>,
     pub rigid_bodies: HashMap<LevelColliderID, RigidBodyHandle>,
+    /// 浮动原点：sim 域 translation = W − origin。f64。
+    pub origin: DVec3,
 }
 
 /// A physics scene
