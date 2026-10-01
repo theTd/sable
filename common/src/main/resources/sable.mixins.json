@@ -93,6 +93,9 @@
   ],
   "mixins": [
     "assembly.AbstractFurnaceBlockEntityMixin",
+    "biome_projection.BiomeManagerMixin",
+    "biome_projection.LevelMixin",
+    "biome_projection.ServerLevelMixin",
     "block_decal_render.ServerLevelMixin",
     "block_placement.BlockPlaceContextMixin",
     "block_placement.EntityGetterMixin",
