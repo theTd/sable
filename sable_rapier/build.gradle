@@ -13,6 +13,8 @@ import net.jpountz.lz4.LZ4FrameOutputStream
 import org.apache.tools.ant.taskdefs.condition.Os
 
 import java.nio.file.Files
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 def mac(arch) {
     [triple: "${arch}-apple-darwin", suffix: "", arch: arch, os: "macos", ext: "dylib", lib: true]
@@ -204,7 +206,110 @@ tasks.register('packRustNatives', Zip) {
         supportedTargets.forEach { t ->
             delete(file("${nativesDir}/${nativesNameForTarget(t)}"))
         }
+        // 全平台包落位：摘掉 host 戳，本机兜底链路（ensureRustNatives）不得再碰这个包
+        delete(file("${nativesDir}/.host-packed"))
     }
+}
+
+/**
+ * 本机兜底：l4z 不入库，本地构建缺 natives 时用本机 cargo 构建宿主平台 native 并打包。
+ * 发布/全平台构建仍走 buildRustNatives（docker，全部 supportedTargets）。
+ *
+ * <p>覆盖防护：l4z 存在且没有 host 戳（{@code .host-packed}，即 docker 全平台构建或
+ * CI artifact 落位的包）时，本链路两个任务都跳过，绝不用宿主单平台包覆盖全平台包；
+ * 戳只由 ensureRustNatives 写入、由 packRustNatives（全平台打包）删除。有戳且 rust 源
+ * 变更时按 gradle up-to-date 重建，保证本地 rust 迭代吃到新 native。</p>
+ */
+def hostNativesTarget = {
+    final String arch = (System.getProperty("os.arch") == "aarch64" || System.getProperty("os.arch") == "arm") ? "aarch64" : "x86_64"
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        return [arch: arch, os: "windows", ext: "dll", lib: false]
+    }
+    if (Os.isFamily(Os.FAMILY_MAC)) {
+        return [arch: arch, os: "macos", ext: "dylib", lib: true]
+    }
+    return [arch: arch, os: "linux", ext: "so", lib: true]
+}
+
+def resolveCargo = {
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        final File userCargo = new File(System.getProperty("user.home"), ".cargo/bin/cargo.exe")
+        if (userCargo.exists()) {
+            return userCargo.absolutePath
+        }
+    }
+    return 'cargo'
+}
+
+def rustSourceInputs = { task ->
+    task.inputs.dir(file("$rustRootDir/rapier/src"))
+    task.inputs.dir(file("$rustRootDir/marten/src"))
+    task.inputs.files(
+            file("$rustRootDir/Cargo.toml"),
+            file("$rustRootDir/Cargo.lock"),
+            file("$rustRootDir/rust-toolchain.toml"),
+            file("$rustRootDir/.cargo/config.toml"),
+            file("$rustRootDir/rapier/Cargo.toml"),
+            file("$rustRootDir/marten/Cargo.toml"))
+}
+
+def hostNativesArchive = { file("${nativesDir}/sable_rapier_binaries.zip.l4z") }
+def hostNativesStamp = { file("${nativesDir}/.host-packed") }
+/** 兜底链路准入：l4z 缺失，或上次就是本机兜底打的（有戳）——全平台包不进。 */
+def hostNativesAllowed = { !hostNativesArchive().exists() || hostNativesStamp().exists() }
+
+tasks.register('compileRustHost', Exec) {
+    group = 'rust'
+    workingDir rustProjectDir
+    description = 'Builds the host-platform Rust native with the local cargo toolchain.'
+
+    final def target = hostNativesTarget()
+    final File hostLib = file("$rustRootDir/target/release/${target.lib ? 'lib' : ''}sable_rapier.${target.ext}")
+    rustSourceInputs(delegate)
+    outputs.file(hostLib)
+    onlyIf { hostNativesAllowed() }
+
+    commandLine resolveCargo(), 'build', '--release'
+}
+
+tasks.register('ensureRustNatives') {
+    group = 'rust'
+    description = 'Packs the host-platform native into the resources l4z (local dev fallback; releases use buildRustNatives for all platforms).'
+
+    final def target = hostNativesTarget()
+    final File hostLib = file("$rustRootDir/target/release/${target.lib ? 'lib' : ''}sable_rapier.${target.ext}")
+    final String hostName = nativesNameForTarget(target)
+    final File archive = hostNativesArchive()
+
+    dependsOn 'compileRustHost'
+    rustSourceInputs(delegate)
+    outputs.file(archive)
+    onlyIf { hostNativesAllowed() }
+
+    doLast {
+        if (!hostLib.exists()) {
+            throw new GradleException("cargo build succeeded but no host native at $hostLib")
+        }
+        final ByteArrayOutputStream mem = new ByteArrayOutputStream()
+        final ZipOutputStream zipOut = new ZipOutputStream(mem)
+        zipOut.putNextEntry(new ZipEntry(hostName))
+        zipOut.write(Files.readAllBytes(hostLib.toPath()))
+        zipOut.closeEntry()
+        zipOut.close()
+        final byte[] packed = mem.toByteArray()
+        nativesDir.mkdirs()
+        try (var f = new FileOutputStream(archive)) {
+            try (var x = new LZ4FrameOutputStream(f, LZ4FrameOutputStream.BLOCKSIZE.SIZE_4MB, packed.length, LZ4FrameOutputStream.FLG.Bits.BLOCK_INDEPENDENCE)) {
+                x.write(packed)
+            }
+        }
+        hostNativesStamp().text = 'host\n'
+    }
+}
+
+processResources {
+    dependsOn 'ensureRustNatives'
+    exclude 'natives/sable_rapier/.host-packed'
 }
 
 repositories {

@@ -31,9 +31,18 @@ Join sable zone for development discussion: https://discord.gg/pnkzu2dtVA
 
 # Building Rust Natives
 
+Natives are build outputs and are not committed to the repo.
+
+Local development (host platform only, no Docker): the normal `./gradlew build` automatically
+runs `sable_rapier:ensureRustNatives`, which builds the host-platform native with the local
+cargo toolchain and packs it into `sable_rapier_binaries.zip.l4z`. Packs it produces carry a
+`.host-packed` stamp; a full multi-platform pack is never overwritten by this fallback.
+
+Full multi-platform pack (releases):
+
 1. Install Docker from https://www.docker.com/get-started/ or from your relevant package manager
-2. Run `gradlew common:buildImages` (only has to be done once)
-3. Run `gradlew common:buildRustNatives`
+2. Run `gradlew sable_rapier:buildImages` (only has to be done once)
+3. Run `gradlew sable_rapier:buildRustNatives`
 
 ### Thanks
 

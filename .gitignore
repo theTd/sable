@@ -138,3 +138,10 @@ runs/
 macos/*.dmg
 
 **/.intentionally-empty-file.o
+
+# Rust natives are build outputs (ensureRustNatives / buildRustNatives), not committed
+/sable_rapier/src/main/resources/natives/sable_rapier/*.l4z
+/sable_rapier/src/main/resources/natives/sable_rapier/sable_rapier_*.dll
+/sable_rapier/src/main/resources/natives/sable_rapier/sable_rapier_*.so
+/sable_rapier/src/main/resources/natives/sable_rapier/sable_rapier_*.dylib
+/sable_rapier/src/main/resources/natives/sable_rapier/.host-packed

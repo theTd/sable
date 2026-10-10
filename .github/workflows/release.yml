@@ -5,7 +5,34 @@ permissions:
   contents: write
 
 jobs:
+  natives:
+    # l4z 不入库：发布前用 docker 全平台构建 natives，作为 artifact 传给 build  job
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: 21
+          cache: gradle
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+      - name: Build Rust natives (all platforms)
+        run: ./gradlew sable_rapier:buildImages sable_rapier:buildRustNatives
+      - name: Take ownership of the workspace
+        run: sudo chown -R $USER:$USER .
+      - name: Upload natives artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sable-rapier-natives
+          path: sable_rapier/src/main/resources/natives/sable_rapier/sable_rapier_binaries.zip.l4z
+
   build:
+    needs: natives
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/openjdk/jdk:21-ubuntu
@@ -23,6 +50,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
       - name: Make Gradle Wrapper Executable
         run: chmod +x ./gradlew
+      - name: Download natives artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sable-rapier-natives
+          path: sable_rapier/src/main/resources/natives/sable_rapier/
       - name: Execute Gradle build
         run: ./gradlew build
       - name: Publish mods
