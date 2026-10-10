@@ -12,11 +12,11 @@ colored.workspace = true
 log.workspace = true
 humantime.workspace = true
 
-rapier3d = { git = "https://github.com/ryanhcode/rapier", rev = "38e92f117590862481a53df6fc69a5d893e29186", features = [
-    "simd-nightly",
+# f64 变体（package 重命名，代码里 rapier3d:: 路径不变）：多簇大坐标场景下
+# f32 + 单一 floating origin 会退化到米级量化。f64 不支持 SoA SIMD（上游注释），只保留 parallel。
+rapier3d = { package = "rapier3d-f64", git = "https://github.com/ryanhcode/rapier", rev = "38e92f117590862481a53df6fc69a5d893e29186", features = [
     "parallel",
 ] }
-#rapier3d = { version = "0.26.1", features = [ "simd-stable" ] }
 
 rayon = "1.10.0"
 dashmap = "7.0.0-rc2"

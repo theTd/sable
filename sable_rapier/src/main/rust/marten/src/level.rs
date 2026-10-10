@@ -87,9 +87,9 @@ pub struct VoxelColliderData {
     pub is_fluid: bool,
 
     /// The friction multiplier
-    pub friction: f32,
-    pub volume: f32,
-    pub restitution: f32,
+    pub friction: f64,
+    pub volume: f64,
+    pub restitution: f64,
 
     /// If this block has special contact behavior
     pub contact_events: Option<GlobalRef>,

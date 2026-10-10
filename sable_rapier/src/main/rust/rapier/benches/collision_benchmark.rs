@@ -6,7 +6,23 @@ use rapier3d::math::Pose3;
 use rapier3d::prelude::ColliderHandle;
 use sable_rapier::ActiveLevelColliderInfo;
 use sable_rapier::algo::{DEFAULT_COLLISION_PARALLEL_CUTOFF, find_collision_pairs};
+use sable_rapier::joints::SableJointSet;
+use sable_rapier::rope::RopeMap;
+use sable_rapier::scene::SableSceneData;
+use std::collections::HashMap;
 use std::hint::black_box;
+
+fn dummy_sable_data() -> SableSceneData {
+    SableSceneData {
+        main_level_chunks: HashMap::new(),
+        octree_chunks: HashMap::new(),
+        joint_set: SableJointSet::new(),
+        rope_map: RopeMap::default(),
+        level_colliders: HashMap::new(),
+        rigid_bodies: HashMap::new(),
+        origin: DVec3::ZERO,
+    }
+}
 
 fn setup_dummy_sable_handle_a() -> ActiveLevelColliderInfo {
     let mut octree = SubLevelOctree::new(7);
@@ -20,7 +36,6 @@ fn setup_dummy_sable_handle_a() -> ActiveLevelColliderInfo {
         center_of_mass: Some(DVec3::new(62.5, 62.5, 62.5)),
         octree: Some(octree),
         chunk_map: None,
-        scene_id: 0,
         fake_velocities: None,
     }
 }
@@ -37,7 +52,6 @@ fn setup_dummy_sable_handle_b() -> ActiveLevelColliderInfo {
         center_of_mass: Some(DVec3::new(128.0 + 64.5, 64.5, 64.5)),
         octree: Some(octree),
         chunk_map: None,
-        scene_id: 0,
         fake_velocities: None,
     }
 }
@@ -61,6 +75,7 @@ fn setup_sphere(octree: &mut SubLevelOctree) {
 fn benchmark_find_collision_pairs(c: &mut Criterion) {
     let sable_body_a = setup_dummy_sable_handle_a();
     let sable_body_b = setup_dummy_sable_handle_b();
+    let sable_data = dummy_sable_data();
     let prediction = 0.0 as Real;
 
     // for i in 0..100000 {
@@ -107,6 +122,7 @@ fn benchmark_find_collision_pairs(c: &mut Criterion) {
                             prediction,
                             DEFAULT_COLLISION_PARALLEL_CUTOFF,
                             false,
+                            &sable_data,
                         );
                         black_box(result)
                     });
@@ -133,6 +149,7 @@ fn benchmark_find_collision_pairs(c: &mut Criterion) {
                             prediction,
                             usize::MAX,
                             false,
+                            &sable_data,
                         );
                         black_box(result)
                     });

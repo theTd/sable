@@ -56,7 +56,7 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
         let complex = (local_bounds_max - local_bounds_min).element_sum() < 10;
         for (static_pos, dynamic_pos) in pairs.iter() {
             let local_pos = dynamic_pos.as_dvec3() + 0.5;
-            let local_pos = (local_pos - center_of_mass).as_vec3();
+            let local_pos = local_pos - center_of_mass;
 
             if complex {
                 for i in 0..8 {
@@ -154,7 +154,7 @@ fn do_drag(
     origin: DVec3,
 ) {
     let point = body.position().transform_point(*point);
-    let static_o = (static_pos.as_dvec3() - origin).as_vec3();
+    let static_o = static_pos.as_dvec3() - origin;
 
     let overlap = Aabb::new(point - size, point + size)
         .intersection(&Aabb::new(static_o, static_o + 1.0));
@@ -178,7 +178,7 @@ fn do_float(
     origin: DVec3,
 ) {
     let point = body.position().transform_point(*point);
-    let static_o = (static_pos.as_dvec3() - origin).as_vec3();
+    let static_o = static_pos.as_dvec3() - origin;
 
     let overlap =
         Aabb::new(point - Vec3::splat(size), point + Vec3::splat(size)).intersection(&Aabb::new(

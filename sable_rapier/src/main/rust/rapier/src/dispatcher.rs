@@ -1,8 +1,8 @@
 use crate::collider::LevelCollider;
 use log::info;
 use rapier3d::geometry::{ContactManifoldData, Shape};
-use rapier3d::glamx::{DVec3, IVec3, Pose3};
-use rapier3d::math::Vec3;
+use rapier3d::glamx::{DVec3, IVec3};
+use rapier3d::math::{Pose3, Vec3};
 use rapier3d::parry::query::details::{NormalConstraints, contact_manifold_cuboid_cuboid_shapes};
 use rapier3d::parry::query::{
     ClosestPoints, Contact, ContactManifold, ContactManifoldsWorkspace, DefaultQueryDispatcher,
@@ -311,7 +311,7 @@ impl SableDispatcher {
                         continue;
                     }
 
-                    for (min_x, min_y, min_z, max_x, max_y, max_z) in
+                    for &(min_x, min_y, min_z, max_x, max_y, max_z) in
                         &voxel_collider_data.collision_boxes
                     {
                         if manifolds.len() <= manifold_index {
@@ -328,9 +328,9 @@ impl SableDispatcher {
                             Vec3::new(center.x as Real, center.y as Real, center.z as Real);
 
                         let half_extents = Vec3::new(
-                            (max_x - min_x) / 2.0,
-                            (max_y - min_y) / 2.0,
-                            (max_z - min_z) / 2.0,
+                            (max_x as Real - min_x as Real) / 2.0,
+                            (max_y as Real - min_y as Real) / 2.0,
+                            (max_z as Real - min_z as Real) / 2.0,
                         );
 
                         // Translate to match the center of the current block
@@ -509,7 +509,7 @@ impl SableDispatcher {
                 continue;
             };
 
-            for (min_x, min_y, min_z, max_x, max_y, max_z) in &voxel_collider_data.collision_boxes {
+            for &(min_x, min_y, min_z, max_x, max_y, max_z) in &voxel_collider_data.collision_boxes {
                 if manifolds.len() <= manifold_index {
                     manifolds.push(ContactManifold::new());
                 }
@@ -523,9 +523,9 @@ impl SableDispatcher {
                 let center = Vec3::new(center.x as Real, center.y as Real, center.z as Real);
 
                 let half_extents = Vec3::new(
-                    (max_x - min_x) / 2.0,
-                    (max_y - min_y) / 2.0,
-                    (max_z - min_z) / 2.0,
+                    (max_x as Real - min_x as Real) / 2.0,
+                    (max_y as Real - min_y as Real) / 2.0,
+                    (max_z as Real - min_z as Real) / 2.0,
                 );
 
                 // Translate to match the center of the current block
@@ -559,7 +559,7 @@ impl SableDispatcher {
                     continue;
                 };
 
-                for (
+                for &(
                     other_min_x,
                     other_min_y,
                     other_min_z,
@@ -586,9 +586,9 @@ impl SableDispatcher {
                     );
 
                     let other_half_extents = Vec3::new(
-                        (other_max_x - other_min_x) / 2.0,
-                        (other_max_y - other_min_y) / 2.0,
-                        (other_max_z - other_min_z) / 2.0,
+                        (other_max_x as Real - other_min_x as Real) / 2.0,
+                        (other_max_y as Real - other_min_y as Real) / 2.0,
+                        (other_max_z as Real - other_min_z as Real) / 2.0,
                     );
 
                     // combine block isometries
@@ -702,8 +702,8 @@ impl SableDispatcher {
             let local_bounds_max = body.local_bounds_max.unwrap();
 
             let body_aabb = Aabb::new(
-                (local_bounds_min.as_dvec3() - center_of_mass).as_vec3() - prediction,
-                (local_bounds_max.as_dvec3() - center_of_mass).as_vec3() - prediction,
+                local_bounds_min.as_dvec3() - center_of_mass - prediction,
+                local_bounds_max.as_dvec3() - center_of_mass - prediction,
             );
 
             local_aabb = local_aabb.intersection(&body_aabb).unwrap_or(local_aabb);
@@ -719,8 +719,8 @@ impl SableDispatcher {
         center_of_mass: DVec3,
         prediction: Real,
     ) -> (IVec3, IVec3) {
-        let mins = aabb.mins.as_dvec3() + center_of_mass - prediction as f64;
-        let maxs = aabb.maxs.as_dvec3() + center_of_mass + prediction as f64;
+        let mins = aabb.mins + center_of_mass - prediction;
+        let maxs = aabb.maxs + center_of_mass + prediction;
 
         let local_min = mins.floor().as_ivec3();
         let local_max = maxs.floor().as_ivec3();
@@ -770,8 +770,8 @@ fn is_interior_collision<ManifoldData: Default + Clone, ContactData: Default + C
             || (collider_info_1.unwrap().local_bounds_min.unwrap()
                 != collider_info_1.unwrap().local_bounds_max.unwrap())
         {
-            let world_p1 = (point.local_p1 * 0.997 + center).as_dvec3() + center_of_mass_1;
-            let normal1 = manifold.local_n1.as_dvec3();
+            let world_p1 = point.local_p1 * 0.997 + center + center_of_mass_1;
+            let normal1 = manifold.local_n1;
 
             let displaced_p1 = world_p1 + normal1 * 0.01;
 
@@ -781,12 +781,11 @@ fn is_interior_collision<ManifoldData: Default + Clone, ContactData: Default + C
         }
 
         if collider_info_2.local_bounds_min.unwrap() != collider_info_2.local_bounds_max.unwrap() {
-            let normal2 = manifold.local_n2.as_dvec3();
+            let normal2 = manifold.local_n2;
 
             // we have to "pull in the points" a tiny bit incase they're outside of the block slightly off-normal
-            let world_p2 = (point.local_p2 * INTERIOR_COLLISION_SCALE_FACTOR + other_center)
-                .as_dvec3()
-                + center_of_mass_2;
+            let world_p2 =
+                point.local_p2 * INTERIOR_COLLISION_SCALE_FACTOR + other_center + center_of_mass_2;
 
             let displaced_p2 = world_p2 + normal2 * INTERIOR_COLLISION_CHECK_DISTANCE;
 
@@ -838,12 +837,12 @@ fn is_inside_voxel_collider(
     let local_pos = world_pos - block_pos.as_dvec3();
 
     for &(min_x, min_y, min_z, max_x, max_y, max_z) in &voxel_data.collision_boxes {
-        if local_pos.x as Real >= min_x
-            && local_pos.x as Real <= max_x
-            && local_pos.y as Real >= min_y
-            && local_pos.y as Real <= max_y
-            && local_pos.z as Real >= min_z
-            && local_pos.z as Real <= max_z
+        if local_pos.x >= min_x as Real
+            && local_pos.x <= max_x as Real
+            && local_pos.y >= min_y as Real
+            && local_pos.y <= max_y as Real
+            && local_pos.z >= min_z as Real
+            && local_pos.z <= max_z as Real
         {
             return true;
         }

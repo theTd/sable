@@ -57,10 +57,10 @@ impl EventHandler for SableEventHandler {
                     body_a: level_collider_a.id,
                     body_b: level_collider_b.id,
                     force_amount: total_force_magnitude as f64,
-                    local_normal_a: local_n1.as_dvec3(),
-                    local_normal_b: local_n2.as_dvec3(),
-                    local_point_a: local_p1.as_dvec3(),
-                    local_point_b: local_p2.as_dvec3(),
+                    local_normal_a: local_n1,
+                    local_normal_b: local_n2,
+                    local_point_a: local_p1,
+                    local_point_b: local_p2,
                 });
             }
         }

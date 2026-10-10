@@ -5,7 +5,7 @@ use rapier3d::geometry::{Shape, ShapeType, SharedShape, TypedShape};
 use rapier3d::glamx::{DVec3, IVec3};
 use rapier3d::parry::bounding_volume::{Aabb, BoundingSphere};
 use rapier3d::prelude::*;
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 
 const WORLD_SIZE: Real = 30_000_000.0;
 
@@ -32,10 +32,7 @@ impl LevelCollider {
 }
 
 pub fn compute_local_aabb_from_bounds(min: IVec3, max: IVec3, com: DVec3) -> Aabb {
-    Aabb::new(
-        (min.as_dvec3() - com).as_vec3(),
-        (max.as_dvec3() + 1.0 - com).as_vec3(),
-    )
+    Aabb::new(min.as_dvec3() - com, max.as_dvec3() + 1.0 - com)
 }
 
 pub fn update_collider_aabb(sim: &mut SimulationSceneData, info: &ActiveLevelColliderInfo) {

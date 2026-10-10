@@ -198,7 +198,7 @@ impl SablePhysicsHooks {
         };
 
         let local = isometry.inverse_transform_point(*global_point);
-        let block_coord_d: DVec3 = local.as_dvec3() + center_of_mass;
+        let block_coord_d: DVec3 = local + center_of_mass;
 
         if block_id == 0 {
             return (tangent_velo, false, 1.0, 0.0);

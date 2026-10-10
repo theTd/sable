@@ -2,8 +2,8 @@ use std::cmp::min;
 
 use marten::Real;
 use marten::level::OCTREE_CHUNK_SHIFT;
-use rapier3d::glamx::{DVec3, IVec3, Pose3};
-use rapier3d::math::Vec3;
+use rapier3d::glamx::{DVec3, IVec3};
+use rapier3d::math::{Pose3, Vec3};
 use rapier3d::na::SimdComplexField;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::{IntoParallelRefIterator, ParallelExtend};
@@ -76,7 +76,7 @@ pub fn find_collision_pairs(
             let node_size = 1 << (octree.log_size as u32 - entry.depth);
 
             // Calculate the center and radius for this node
-            let node_center = entry.min.as_vec3() + node_size as f32 / 2.0;
+            let node_center = entry.min.as_dvec3() + node_size as Real / 2.0;
             let transformed_center = isometry.rotation.mul_vec3(node_center) + translation;
             let radius = node_size as Real / 2.0 * 1.7321 + prediction;
 
@@ -155,7 +155,7 @@ fn get_overlapping_nodes(
     liquid: bool,
 ) -> (bool, Option<Vec<IVec3>>) {
     // biggest power of two that doesn't go over radius
-    let log2 = ((dist * 2.0).simd_ln() / 2.0f32.simd_ln()).floor() as i32;
+    let log2 = ((dist * 2.0).simd_ln() / 2.0f64.simd_ln()).floor() as i32;
 
     let log2 = if let Some(other_handle) = other_handle {
         let Some(oct) = &other_handle.octree else {
@@ -171,10 +171,10 @@ fn get_overlapping_nodes(
     } else {
         sable_data.origin
     };
-    let min_block_pos = ((pos - dist).as_dvec3() + com_offset + origin)
+    let min_block_pos = (pos - dist + com_offset + origin)
         .floor()
         .as_ivec3();
-    let max_block_pos = ((pos + dist).as_dvec3() + com_offset + origin)
+    let max_block_pos = (pos + dist + com_offset + origin)
         .floor()
         .as_ivec3();
 

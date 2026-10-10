@@ -6,8 +6,8 @@ use jni::sys::{jdouble, jint, jlong};
 use marten::Real;
 use rapier3d::dynamics::RigidBodyBuilder;
 use rapier3d::geometry::{ColliderBuilder, SharedShape};
-use rapier3d::glamx::{DVec3, Pose3, Quat};
-use rapier3d::math::Vec3;
+use rapier3d::glamx::{DQuat, DVec3};
+use rapier3d::math::{Pose3, Vec3};
 use rapier3d::pipeline::{ActiveEvents, ActiveHooks};
 use rapier3d::prelude::{RigidBodyHandle, RigidBodyVelocity};
 
@@ -125,7 +125,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
     let center_of_mass_arr = extract_jdouble_array!(env, center_of_mass, 3);
     let pose_arr = extract_jdouble_array!(env, pose, 7);
     let velocities_arr = extract_jdouble_array!(env, velocities, 6);
-    let quat = Quat::from_xyzw(
+    let quat = DQuat::from_xyzw(
         pose_arr[3] as Real,
         pose_arr[4] as Real,
         pose_arr[5] as Real,
@@ -161,7 +161,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
         }
 
         let translation = if info.static_mount.is_some() {
-            (DVec3::new(pose_arr[0], pose_arr[1], pose_arr[2]) - origin).as_vec3()
+            DVec3::new(pose_arr[0], pose_arr[1], pose_arr[2]) - origin
         } else {
             Vec3::new(pose_arr[0] as Real, pose_arr[1] as Real, pose_arr[2] as Real)
         };

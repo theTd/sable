@@ -9,15 +9,15 @@ mod event_handler;
 mod groups;
 mod floating_origin;
 mod hooks;
-mod joints;
-mod rope;
-mod scene;
+pub mod joints;
+pub mod rope;
+pub mod scene;
 mod voxel_collider;
 
 use jni::objects::{JClass, JDoubleArray, JIntArray};
 use jni::sys::{jboolean, jdouble, jint, jlong};
 use jni::{JNIEnv, JavaVM};
-use rapier3d::glamx::{DVec3, Quat};
+use rapier3d::glamx::{DQuat, DVec3};
 use std::collections::HashMap;
 use std::io::ErrorKind::BrokenPipe;
 use std::io::{self, Write};
@@ -656,7 +656,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     let mut pose_arr: [jdouble; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     env.get_double_array_region(pose, 0, &mut pose_arr).unwrap();
 
-    let quat = Quat::from_xyzw(
+    let quat = DQuat::from_xyzw(
         pose_arr[3] as Real,
         pose_arr[4] as Real,
         pose_arr[5] as Real,
@@ -667,7 +667,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
 
     with_handle(handle, |scene| {
-        let t = (w - scene.sable_data.read().unwrap().origin).as_vec3();
+        let t = w - scene.sable_data.read().unwrap().origin;
         let mut rigid_body = RigidBodyBuilder::dynamic()
             .ccd_enabled(true)
             .translation(t)
@@ -1186,8 +1186,8 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_tel
         let rb = &mut sim_data.rigid_body_set[sable_data.rigid_bodies[&(id as LevelColliderID)]];
 
         let mut pose = *rb.position();
-        pose.translation = (w - sable_data.origin).as_vec3();
-        pose.rotation = Quat::from_xyzw(i as Real, j as Real, k as Real, r as Real);
+        pose.translation = w - sable_data.origin;
+        pose.rotation = DQuat::from_xyzw(i as Real, j as Real, k as Real, r as Real);
         rb.set_position(pose, true);
     })
 }

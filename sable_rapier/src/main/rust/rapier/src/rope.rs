@@ -96,7 +96,7 @@ pub fn tick(scene: &PhysicsScene) {
                     .impulse_joint_set
                     .get_mut(attachment.joint, false)
                     .unwrap();
-                impulse_joint.data.set_local_anchor1(local_anchor.as_vec3());
+                impulse_joint.data.set_local_anchor1(local_anchor);
             }
         }
 
@@ -116,7 +116,7 @@ pub fn tick(scene: &PhysicsScene) {
                     .impulse_joint_set
                     .get_mut(attachment.joint, false)
                     .unwrap();
-                impulse_joint.data.set_local_anchor1(local_anchor.as_vec3());
+                impulse_joint.data.set_local_anchor1(local_anchor);
             }
         }
     }
@@ -173,7 +173,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
                 coordinates[i * 3 + 1],
                 coordinates[i * 3 + 2],
             );
-            let coordinate = (w - origin).as_vec3();
+            let coordinate = w - origin;
 
             let handle = create_rope_body(
                 &mut sim_data,
@@ -483,7 +483,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_add
         let handle = create_rope_body(
             &mut sim_data,
             universal_drag,
-            (w - origin).as_vec3(),
+            w - origin,
             point_radius,
         );
         strand.joints.insert(

@@ -1,8 +1,8 @@
 use crate::scene::PhysicsScene;
-use rapier3d::glamx::{DVec3, Pose3};
-use rapier3d::math::Real;
+use rapier3d::glamx::DVec3;
+use rapier3d::math::{Pose3, Real};
 
-/// sim 域坐标不变式：|translation| ≤ 该阈值（ULP ≤ 0.244mm）
+/// sim 域坐标不变式：|translation| ≤ 该阈值（f64 下 ULP ~4.6e-13，纯保险）
 pub const REBASE_THRESHOLD: Real = 2048.0;
 
 /// 把整个场景平移 c（f64）：动态 body 与 static_mount wrt 减 c，origin 加 c。
@@ -16,14 +16,14 @@ pub fn rebase_by(scene: &PhysicsScene, c: DVec3) {
         sim.rigid_body_set
             .get_mut(*h)
             .unwrap()
-            .set_translation((t.as_dvec3() - c).as_vec3(), false);
+            .set_translation(t - c, false);
     }
     for h in sable.rope_map.point_handles() {
         let t = sim.rigid_body_set.get(h).unwrap().translation();
         sim.rigid_body_set
             .get_mut(h)
             .unwrap()
-            .set_translation((t.as_dvec3() - c).as_vec3(), false);
+            .set_translation(t - c, false);
     }
     for info in sable.level_colliders.values() {
         if info.static_mount.is_some() {
@@ -32,7 +32,7 @@ pub fn rebase_by(scene: &PhysicsScene, c: DVec3) {
             // 同步前会重复从旧 world 减 c，丢失前一次平移。
             let pose = *co.position_wrt_parent().unwrap();
             co.set_position_wrt_parent(Pose3 {
-                translation: (pose.translation.as_dvec3() - c).as_vec3(),
+                translation: pose.translation - c,
                 rotation: pose.rotation,
             });
         }
@@ -49,8 +49,8 @@ pub fn rebase_if_needed(scene: &PhysicsScene) {
     let sable = scene.sable_data.write().unwrap();
     let sim = scene.sim_data.write().unwrap();
 
-    let mut min = rapier3d::math::Vec3::splat(f32::MAX);
-    let mut max = rapier3d::math::Vec3::splat(f32::MIN);
+    let mut min = rapier3d::math::Vec3::splat(f64::MAX);
+    let mut max = rapier3d::math::Vec3::splat(f64::MIN);
     let mut consider = |t: &rapier3d::math::Vec3| {
         min = min.min(*t);
         max = max.max(*t);
@@ -82,7 +82,7 @@ pub fn rebase_if_needed(scene: &PhysicsScene) {
     if m <= REBASE_THRESHOLD {
         return;
     }
-    let c = (min.as_dvec3() + max.as_dvec3()) * 0.5;
+    let c = (min + max) * 0.5;
     if c.length() < 1e-3 {
         return; // 已居中但跨度仍超阈值（多簇病理场景）：避免每步无效重定基
     }
@@ -92,15 +92,15 @@ pub fn rebase_if_needed(scene: &PhysicsScene) {
 }
 
 /// 绝对位姿 writer 的 f64 精度闭环：若 |W − origin| 超阈值，先以 c = W − origin
-/// rebase（新体恰好落在 0 附近，origin := W，f64 精确），再做 f32 cast。
+/// rebase（新体恰好落在 0 附近，origin := W，f64 精确），再写入 sim 域位姿。
 /// 调用时不得持有任一锁（writer 用独立 with_handle 作用域先行调用）。
 pub fn ensure_origin_near(scene: &PhysicsScene, w: &DVec3) {
     {
         let sable = scene.sable_data.write().unwrap();
         let d = *w - sable.origin;
-        if d.x.abs() <= REBASE_THRESHOLD as f64
-            && d.y.abs() <= REBASE_THRESHOLD as f64
-            && d.z.abs() <= REBASE_THRESHOLD as f64
+        if d.x.abs() <= REBASE_THRESHOLD
+            && d.y.abs() <= REBASE_THRESHOLD
+            && d.z.abs() <= REBASE_THRESHOLD
         {
             return;
         }
@@ -250,7 +250,7 @@ mod tests {
 
         let sable = scene.sable_data.read().unwrap();
         assert_eq!(sable.origin, w);
-        let residual = (w - sable.origin).as_vec3();
+        let residual = w - sable.origin;
         assert!(residual.length() < 1e-3);
     }
 
@@ -303,8 +303,8 @@ mod tests {
         assert_eq!(sable.origin, origin_old + c);
 
         let t_dyn_new = sim.rigid_body_set.get(dyn_h).unwrap().translation();
-        let recovered = sable.origin + t_dyn_new.as_dvec3();
-        let expected = origin_old + t_dyn_old.as_dvec3();
+        let recovered = sable.origin + t_dyn_new;
+        let expected = origin_old + t_dyn_old;
         assert!((recovered - expected).length() < 1e-3);
 
         let ground_new = sim
@@ -317,8 +317,8 @@ mod tests {
 
         let t0 = sim.rigid_body_set.get(rope_p0).unwrap().translation();
         let t1 = sim.rigid_body_set.get(rope_p1).unwrap().translation();
-        assert!((t0.as_dvec3() - DVec3::new(5.0, -1.0, -2.0)).length() < 1e-3);
-        assert!((t1.as_dvec3() - DVec3::new(6.0, -1.0, -2.0)).length() < 1e-3);
+        assert!((t0 - DVec3::new(5.0, -1.0, -2.0)).length() < 1e-3);
+        assert!((t1 - DVec3::new(6.0, -1.0, -2.0)).length() < 1e-3);
 
         let mount_new = sim
             .collider_set
@@ -327,7 +327,7 @@ mod tests {
             .position_wrt_parent()
             .unwrap()
             .translation;
-        assert!((mount_new.as_dvec3() - (mount_old.as_dvec3() - c)).length() < 1e-3);
+        assert!((mount_new - (mount_old - c)).length() < 1e-3);
     }
 
     #[test]
@@ -368,7 +368,7 @@ mod tests {
             .unwrap()
             .translation;
         // 100-10-5=85, 20-0-1=19, 30-0-2=28
-        assert!((wrt.as_dvec3() - DVec3::new(85.0, 19.0, 28.0)).length() < 1e-3);
+        assert!((wrt - DVec3::new(85.0, 19.0, 28.0)).length() < 1e-3);
         assert_eq!(sable.origin, DVec3::new(15.0, 1.0, 2.0));
     }
 

@@ -4,7 +4,7 @@ use jni::sys::{jdouble, jint, jlong};
 use marten::Real;
 use rapier3d::dynamics::RigidBodyBuilder;
 use rapier3d::geometry::{ColliderBuilder, SharedShape};
-use rapier3d::glamx::{DVec3, Quat};
+use rapier3d::glamx::{DQuat, DVec3};
 
 use crate::scene::LevelColliderID;
 use crate::floating_origin;
@@ -25,7 +25,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     let mut pose_arr: [jdouble; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     env.get_double_array_region(pose, 0, &mut pose_arr).unwrap();
 
-    let quat = Quat::from_xyzw(
+    let quat = DQuat::from_xyzw(
         pose_arr[3] as Real,
         pose_arr[4] as Real,
         pose_arr[5] as Real,
@@ -36,7 +36,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
 
     with_handle(handle, |scene| {
-        let t = (w - scene.sable_data.read().unwrap().origin).as_vec3();
+        let t = w - scene.sable_data.read().unwrap().origin;
         let mut rigid_body = RigidBodyBuilder::dynamic()
             .ccd_enabled(true)
             .translation(t)

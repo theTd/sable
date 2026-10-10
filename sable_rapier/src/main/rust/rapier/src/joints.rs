@@ -8,7 +8,7 @@ use marten::Real;
 use rapier3d::dynamics::{
     GenericJointBuilder, JointAxesMask, JointAxis, RevoluteJointBuilder, SpringCoefficients,
 };
-use rapier3d::glamx::{DVec3, Quat};
+use rapier3d::glamx::{DQuat, DVec3};
 use rapier3d::math::Vec3;
 use rapier3d::prelude::{FixedJointBuilder, ImpulseJointHandle};
 use std::collections::HashMap;
@@ -25,8 +25,8 @@ struct SubLevelJoint {
     normal_a: DVec3,
     normal_b: DVec3,
 
-    rotation_a: Option<Quat>,
-    rotation_b: Option<Quat>,
+    rotation_a: Option<DQuat>,
+    rotation_b: Option<DQuat>,
 
     handle: RapierJointHandle,
 
@@ -79,7 +79,7 @@ pub fn tick(scene: &PhysicsScene) {
         let impulse_joint = sim.impulse_joint_set.get_mut(joint.handle, false).unwrap();
         impulse_joint.data.contacts_enabled = joint.contacts_enabled;
         if !joint.fixed && joint.rotation_a.is_none() {
-            impulse_joint.data.set_local_axis1(joint.normal_a.as_vec3());
+            impulse_joint.data.set_local_axis1(joint.normal_a);
         }
 
         let center_of_mass_1 =
@@ -88,9 +88,9 @@ pub fn tick(scene: &PhysicsScene) {
         let local_anchor_1 = joint.pos_a - center_of_mass_1;
         impulse_joint
             .data
-            .set_local_anchor1(local_anchor_1.as_vec3());
+            .set_local_anchor1(local_anchor_1);
         if !joint.fixed && joint.rotation_b.is_none() {
-            impulse_joint.data.set_local_axis2(joint.normal_b.as_vec3());
+            impulse_joint.data.set_local_axis2(joint.normal_b);
         }
 
         let center_of_mass_2 =
@@ -99,7 +99,7 @@ pub fn tick(scene: &PhysicsScene) {
         let local_anchor_2 = joint.pos_b - center_of_mass_2;
         impulse_joint
             .data
-            .set_local_anchor2(local_anchor_2.as_vec3());
+            .set_local_anchor2(local_anchor_2);
 
         if let Some(rotation_a) = joint.rotation_a {
             impulse_joint.data.local_frame1.rotation = rotation_a;
@@ -432,7 +432,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_add
             sable_data.rigid_bodies[&(id_b as LevelColliderID)]
         };
 
-        let quat = Quat::from_xyzw(
+        let quat = DQuat::from_xyzw(
             local_q_x as Real,
             local_q_y as Real,
             local_q_z as Real,
@@ -528,7 +528,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_add
             SpringCoefficients::new(JOINT_SPRING_FREQUENCY, JOINT_SPRING_DAMPING_RATIO),
         );
 
-        let quat = Quat::from_xyzw(
+        let quat = DQuat::from_xyzw(
             local_q_x as Real,
             local_q_y as Real,
             local_q_z as Real,
@@ -620,13 +620,13 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_add
 
         let locked_axes = JointAxesMask::from_bits_truncate(locked_axes_mask as u8);
 
-        let rotation_a = Quat::from_xyzw(
+        let rotation_a = DQuat::from_xyzw(
             local_q_x_a as Real,
             local_q_y_a as Real,
             local_q_z_a as Real,
             local_q_w_a as Real,
         );
-        let rotation_b = Quat::from_xyzw(
+        let rotation_b = DQuat::from_xyzw(
             local_q_x_b as Real,
             local_q_y_b as Real,
             local_q_z_b as Real,
@@ -705,7 +705,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
         };
 
         let position = DVec3::new(local_x as f64, local_y as f64, local_z as f64);
-        let rotation = Quat::from_xyzw(
+        let rotation = DQuat::from_xyzw(
             local_q_x as Real,
             local_q_y as Real,
             local_q_z as Real,
