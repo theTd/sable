@@ -145,14 +145,22 @@ public abstract class SubLevelContainer {
      * Called every tick for the plotgrid.
      */
     public void tick() {
+        final net.minecraft.util.profiling.ProfilerFiller profiler = this.level.getProfiler();
+        profiler.push("subLevelTick");
         this.allSubLevels.forEach(SubLevel::tick);
+        profiler.pop();
         this.processSubLevelRemovals();
 
         if (!this.hasSubLevels && this.canSkipObserverTicks()) {
             return;
         }
 
-        this.observers.forEach(observer -> observer.tick(this));
+        // Named per observer so the vanilla profiler (and /dimblend slowticks) can attribute it.
+        for (final SubLevelObserver observer : this.observers) {
+            profiler.push(observer.getClass().getSimpleName());
+            observer.tick(this);
+            profiler.pop();
+        }
     }
 
     /**

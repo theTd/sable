@@ -253,6 +253,7 @@ impl SableDispatcher {
         manifolds: &mut Vec<ContactManifold<ContactManifoldData, ContactData>>,
         swap: bool,
     ) {
+        let timed = std::time::Instant::now();
         let physics_state = crate::get_physics_state();
         let sable_data = self.sable_data.read().unwrap();
 
@@ -427,6 +428,12 @@ impl SableDispatcher {
         if manifolds.len() > manifold_index {
             manifolds.truncate(manifold_index);
         }
+
+        let cells = (local_max - local_min + IVec3::ONE).max(IVec3::ZERO);
+        crate::step_stats::VOXEL_VS_SHAPE.record(
+            timed,
+            cells.x as u64 * cells.y as u64 * cells.z as u64,
+        );
     }
 
     fn world_vs_world<ContactData: Default + Copy>(
@@ -438,6 +445,7 @@ impl SableDispatcher {
         manifolds: &mut Vec<ContactManifold<ContactManifoldData, ContactData>>,
         swap: bool,
     ) {
+        let timed = std::time::Instant::now();
         let physics_state = crate::get_physics_state();
         let sable_data = self.sable_data.read().unwrap();
 
@@ -467,7 +475,9 @@ impl SableDispatcher {
         // let (local_min, local_max) = Self::calculate_local_bounds(local_aabb, center_of_mass_1, prediction);
 
         let mut manifold_index = 0;
+        let mut box_tests: u64 = 0;
 
+        let pair_search = std::time::Instant::now();
         let pairs = find_collision_pairs(
             collider_info_2,
             collider_info_1,
@@ -477,6 +487,7 @@ impl SableDispatcher {
             false,
             &sable_data,
         );
+        crate::step_stats::VOXEL_PAIR_SEARCH.record(pair_search, pairs.len() as u64);
 
         for (static_pos, dynamic_pos) in pairs.iter() {
             let static_x = static_pos.x;
@@ -600,6 +611,7 @@ impl SableDispatcher {
 
                     let mut new_manifold: ContactManifold<ContactManifoldData, ContactData> =
                         ContactManifold::new();
+                    box_tests += 1;
                     contact_manifold_cuboid_cuboid_shapes(
                         &combined_block_isometry,
                         &rapier3d::parry::shape::Cuboid::new(half_extents),
@@ -687,6 +699,9 @@ impl SableDispatcher {
         if manifolds.len() > manifold_index {
             manifolds.truncate(manifold_index);
         }
+
+        crate::step_stats::VOXEL_BOX_TESTS.count(box_tests);
+        crate::step_stats::VOXEL_VS_VOXEL.record(timed, pairs.len() as u64);
     }
 
     /// Adjusts the AABB for a given body

@@ -251,6 +251,7 @@ impl SablePhysicsHooks {
 
         let args: Vec<jvalue> = args.iter().map(|v| v.as_jni()).collect();
 
+        let timed = std::time::Instant::now();
         let mut env = current_step_vm.get_env().unwrap();
         let result =
             unsafe { env.call_method_unchecked(contact_events, method, ReturnType::Array, &args) }
@@ -259,6 +260,7 @@ impl SablePhysicsHooks {
 
         let mut velo_arr: [jdouble; 4] = [0.0, 0.0, 0.0, 0.0];
         env.get_double_array_region(arr, 0, &mut velo_arr).unwrap();
+        crate::step_stats::CONTACT_EVENT_CALLBACKS.record(timed, 1);
 
         let velo = Vec3::new(
             velo_arr[0] as Real,

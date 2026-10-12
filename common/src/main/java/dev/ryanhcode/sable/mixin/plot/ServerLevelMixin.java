@@ -86,7 +86,12 @@ public abstract class ServerLevelMixin extends Level {
         assert plotContainer != null : "SubLevelContainer is null when ticking";
 
         if (runNormally) {
+            // Injected at the head of ServerLevel#tick: without a section all of Sable's tick
+            // shows up as unspecified time of the level tick.
+            final ProfilerFiller profiler = ((ServerLevel) (Object) this).getProfiler();
+            profiler.push("sable");
             plotContainer.tick();
+            profiler.pop();
         }
     }
 

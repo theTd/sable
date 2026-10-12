@@ -32,6 +32,7 @@ pub fn find_collision_pairs(
     let Some(octree) = &sable_body.octree else {
         panic!("No octree!")
     };
+    crate::step_stats::note_octree_log_size(octree.log_size);
 
     let local_bounds_min = sable_body.local_bounds_min.unwrap();
 
@@ -71,8 +72,14 @@ pub fn find_collision_pairs(
 
         let do_level_parallel = current_level.len() >= cutoff;
 
+        crate::step_stats::PAIR_SEARCH_NODES.count(current_level.len() as u64);
         let process_stack_object = |entry: &StackObject| -> LevelData {
             let node = *unsafe { octree.buffer.get_unchecked(entry.index as usize) };
+            if node == 0 {
+                // Empty node: neither a leaf (pairs) nor a branch (children), so the overlap
+                // query below would be thrown away. Most children of a sparse body are empty.
+                return (None, None);
+            }
             let node_size = 1 << (octree.log_size as u32 - entry.depth);
 
             // Calculate the center and radius for this node
@@ -231,17 +238,24 @@ fn get_overlapping_nodes(
     for ox in min_octree_pos.x..=max_octree_pos.x {
         for oy in min_octree_pos.y..=max_octree_pos.y {
             for oz in min_octree_pos.z..=max_octree_pos.z {
+                crate::step_stats::PAIR_SEARCH_CHUNK_LOOKUPS.count(1);
                 let chunk = sable_data.octree_chunks.get(&pack_section_pos(ox, oy, oz));
                 let Some(chunk) = chunk else {
                     continue;
                 };
 
-                let min_x = min_block_pos.x >> log2;
-                let min_y = min_block_pos.y >> log2;
-                let min_z = min_block_pos.z >> log2;
-                let max_x = max_block_pos.x >> log2;
-                let max_y = max_block_pos.y >> log2;
-                let max_z = max_block_pos.z >> log2;
+                // Only the cells of the query range that lie inside this octree chunk: cells
+                // outside it always miss (the chunk octree answers -2 out of bounds), so walking
+                // the whole range for every chunk only multiplied the work by the chunk count
+                // (millions of queries per step for a large body's top nodes). log2 <= the
+                // chunk shift, so chunk borders fall on cell borders.
+                let cells_per_chunk_shift = OCTREE_CHUNK_SHIFT - log2;
+                let min_x = (min_block_pos.x >> log2).max(ox << cells_per_chunk_shift);
+                let min_y = (min_block_pos.y >> log2).max(oy << cells_per_chunk_shift);
+                let min_z = (min_block_pos.z >> log2).max(oz << cells_per_chunk_shift);
+                let max_x = (max_block_pos.x >> log2).min(((ox + 1) << cells_per_chunk_shift) - 1);
+                let max_y = (max_block_pos.y >> log2).min(((oy + 1) << cells_per_chunk_shift) - 1);
+                let max_z = (max_block_pos.z >> log2).min(((oz + 1) << cells_per_chunk_shift) - 1);
                 let chunk_octree = if liquid {
                     &chunk.liquid_octree
                 } else {
@@ -252,6 +266,11 @@ fn get_overlapping_nodes(
                     continue;
                 }
 
+                crate::step_stats::PAIR_SEARCH_QUERIES.count(
+                    ((max_x - min_x + 1).max(0) as u64)
+                        * ((max_y - min_y + 1).max(0) as u64)
+                        * ((max_z - min_z + 1).max(0) as u64),
+                );
                 for x in min_x..=max_x {
                     for y in min_y..=max_y {
                         for z in min_z..=max_z {
@@ -279,5 +298,119 @@ fn get_overlapping_nodes(
         (false, None)
     } else {
         (!blocks.as_ref().unwrap().is_empty(), blocks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::joints::SableJointSet;
+    use crate::rope::RopeMap;
+    use marten::level::OctreeChunkSection;
+    use std::collections::HashMap;
+
+    /// Sparse terrain spanning octree chunks on both sides of zero.
+    fn terrain() -> SableSceneData {
+        let mut octree_chunks: HashMap<i64, OctreeChunkSection> = HashMap::new();
+        for x in -70i32..70 {
+            for y in -8..8 {
+                for z in -70..70 {
+                    if (x * 7 + y * 13 + z * 3).rem_euclid(11) != 0 {
+                        continue;
+                    }
+                    let key = pack_section_pos(
+                        x >> OCTREE_CHUNK_SHIFT,
+                        y >> OCTREE_CHUNK_SHIFT,
+                        z >> OCTREE_CHUNK_SHIFT,
+                    );
+                    let mask = (1 << OCTREE_CHUNK_SHIFT) - 1;
+                    octree_chunks
+                        .entry(key)
+                        .or_insert_with(OctreeChunkSection::new)
+                        .octree
+                        .insert(x & mask, y & mask, z & mask, 1);
+                }
+            }
+        }
+        SableSceneData {
+            main_level_chunks: HashMap::new(),
+            octree_chunks,
+            joint_set: SableJointSet::new(),
+            rope_map: RopeMap::default(),
+            level_colliders: HashMap::new(),
+            rigid_bodies: HashMap::new(),
+            origin: DVec3::ZERO,
+        }
+    }
+
+    /// The terrain query before clipping: every chunk walks the whole cell range.
+    fn unclipped(pos: Vec3, dist: Real, sable_data: &SableSceneData, cancel_early: bool) -> (bool, Option<Vec<IVec3>>) {
+        let log2 = ((dist * 2.0).simd_ln() / 2.0f64.simd_ln()).floor() as i32;
+        let log2 = min(log2, OCTREE_CHUNK_SHIFT);
+        let min_block_pos = (pos - dist + sable_data.origin).floor().as_ivec3();
+        let max_block_pos = (pos + dist + sable_data.origin).floor().as_ivec3();
+        let min_octree_pos = min_block_pos >> OCTREE_CHUNK_SHIFT;
+        let max_octree_pos = max_block_pos >> OCTREE_CHUNK_SHIFT;
+        let mut blocks = Vec::new();
+        for ox in min_octree_pos.x..=max_octree_pos.x {
+            for oy in min_octree_pos.y..=max_octree_pos.y {
+                for oz in min_octree_pos.z..=max_octree_pos.z {
+                    let Some(chunk) = sable_data.octree_chunks.get(&pack_section_pos(ox, oy, oz)) else {
+                        continue;
+                    };
+                    for x in (min_block_pos.x >> log2)..=(max_block_pos.x >> log2) {
+                        for y in (min_block_pos.y >> log2)..=(max_block_pos.y >> log2) {
+                            for z in (min_block_pos.z >> log2)..=(max_block_pos.z >> log2) {
+                                if chunk.octree.query(
+                                    (x << log2) - (ox << OCTREE_CHUNK_SHIFT),
+                                    (y << log2) - (oy << OCTREE_CHUNK_SHIFT),
+                                    (z << log2) - (oz << OCTREE_CHUNK_SHIFT),
+                                    log2,
+                                ) > -2
+                                {
+                                    if cancel_early {
+                                        return (true, None);
+                                    }
+                                    blocks.push(IVec3::new(x, y, z) << log2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if cancel_early {
+            (false, None)
+        } else {
+            (!blocks.is_empty(), Some(blocks))
+        }
+    }
+
+    #[test]
+    fn clipped_terrain_query_matches_the_unclipped_walk() {
+        let sable_data = terrain();
+        let mut hits = 0;
+        let mut misses = 0;
+        for dist in [0.87, 1.8, 3.5, 7.0, 15.0, 31.0, 62.0, 120.0] {
+            for x in (-75..75).step_by(11) {
+                for y in (-12..12).step_by(5) {
+                    for z in (-75..75).step_by(13) {
+                        let pos = Vec3::new(x as Real + 0.37, y as Real + 0.61, z as Real + 0.19);
+                        for cancel_early in [true, false] {
+                            let expected = unclipped(pos, dist, &sable_data, cancel_early);
+                            let actual = get_overlapping_nodes(None, DVec3::ZERO, pos, dist, &sable_data, cancel_early, false);
+                            assert_eq!(actual, expected, "pos {pos:?} dist {dist} cancel_early {cancel_early}");
+                            if expected.0 {
+                                hits += 1;
+                            } else {
+                                misses += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The fixture must exercise both outcomes.
+        assert!(hits > 0 && misses > 0, "hits {hits} misses {misses}");
     }
 }

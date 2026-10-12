@@ -238,7 +238,10 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         final ServerSubLevelContainer container = (ServerSubLevelContainer) sidelessContainer;
         this.tickPunchCooldowns();
 
+        final net.minecraft.util.profiling.ProfilerFiller profiler = this.level.getProfiler();
+        profiler.push("chunkTickets");
         this.ticketManager.update(this.level, container, this, this.pipeline, 1.0 / 20.0);
+        profiler.popPush("actors");
 
         for (final ServerSubLevel subLevel : container.getAllSubLevels()) {
             subLevel.updateLastPose();
@@ -247,7 +250,9 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
             }
         }
 
+        profiler.popPush("pipelineTick");
         this.pipeline.tick();
+        profiler.pop();
 
         if (!this.paused) {
             this.physicsTickCounter++;
@@ -260,7 +265,9 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
 
                 // tick the pipeline physics
                 try {
+                    profiler.push("physics");
                     this.tickPipelinePhysics(container, elapsedTicks);
+                    profiler.pop();
                 } catch (final Exception e) {
                     final CrashReport crashReport = CrashReport.forThrowable(e, "Sable ticking physics");
                     final CrashReportCategory crashReportCategory = crashReport.addCategory("Current physics state");
@@ -274,11 +281,15 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
     }
 
     private void tickPipelinePhysics(final ServerSubLevelContainer container, final int elapsedTicks) {
+        final net.minecraft.util.profiling.ProfilerFiller profiler = this.level.getProfiler();
+        profiler.push("prePhysicsTicks");
         this.pipeline.prePhysicsTicks();
+        profiler.pop();
 
         for (this.currentSubstep = 0; this.currentSubstep < this.config.substepsPerTick; this.currentSubstep++) {
             final double substepTimeStep = (double) elapsedTicks / 20.0 / this.config.substepsPerTick;
 
+            profiler.push("massAndBegin");
             for (final ServerSubLevel subLevel : container.getAllSubLevels()) {
                 if (subLevel.isRemoved()) continue;
                 subLevel.prePhysicsTickBegin();
@@ -289,21 +300,26 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
                 subLevel.updateMergedMassData((float) this.getPartialPhysicsTick());
             }
 
+            // Block-entity physics hooks (e.g. Simurail bogeys) run here.
+            profiler.popPush("prePhysicsTick");
             for (final ServerSubLevel subLevel : container.getAllSubLevels()) {
                 if (subLevel.isRemoved()) continue;
                 subLevel.prePhysicsTick(this, this.getPhysicsHandle(subLevel), substepTimeStep);
             }
 
             SableEventPublishPlatform.INSTANCE.prePhysicsTick(this, substepTimeStep);
+            profiler.popPush("applyForces");
 
             for (final ServerSubLevel subLevel : container.getAllSubLevels()) {
                 if (subLevel.isRemoved()) continue;
                 subLevel.applyQueuedForces(this, this.getPhysicsHandle(subLevel), substepTimeStep);
             }
 
+            profiler.popPush("step");
             IN_PHYSICS_STEP = true;
             this.pipeline.physicsTick(substepTimeStep);
             IN_PHYSICS_STEP = false;
+            profiler.popPush("postStep");
 
             // if any blocks were modified due to, say, fragile blocks breaking
             // sub-levels could have been removed during the physics tick
@@ -317,6 +333,7 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
             this.queuedWakeUps.clear();
 
             SableEventPublishPlatform.INSTANCE.postPhysicsTick(this, substepTimeStep);
+            profiler.pop();
         }
 
         this.pipeline.postPhysicsTicks();

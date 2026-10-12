@@ -12,6 +12,7 @@ mod hooks;
 pub mod joints;
 pub mod rope;
 pub mod scene;
+mod step_stats;
 mod voxel_collider;
 
 use jni::objects::{JClass, JDoubleArray, JIntArray};
@@ -533,7 +534,9 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_handle(handle, |scene| {
+            let started = std::time::Instant::now();
             floating_origin::rebase_if_needed(scene);
+            let rebased = std::time::Instant::now();
             // Must run before every substep: constraints are created with zero
             // anchors and only get their real frames here, Java-side frame
             // updates (setConstraintFrame) made during prePhysicsTick land here,
@@ -541,6 +544,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
             // are expressed against.
             rope::tick(scene);
             joints::tick(scene);
+            let constraints_refreshed = std::time::Instant::now();
 
             scene.manifold_info_map.clear();
 
@@ -570,6 +574,8 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
 
             let params = &params.integration_parameters;
 
+            step_stats::begin_pipeline_step();
+            let pipeline_started = std::time::Instant::now();
             sim.pipeline.step(
                 gravity,
                 params,
@@ -584,6 +590,32 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
                 &sim.physics_hooks,
                 &sim.event_handler,
             );
+
+            let marks = step_stats::StepMarks {
+                started,
+                rebased,
+                constraints_refreshed,
+                pipeline_started,
+                finished: std::time::Instant::now(),
+            };
+            if step_stats::total_millis(&marks) >= step_stats::SLOW_STEP_MILLIS {
+                step_stats::report_slow_step(&marks, &sim.pipeline.counters, || step_stats::SceneSizes {
+                    bodies: sim.rigid_body_set.len(),
+                    awake_dynamic: sim
+                        .rigid_body_set
+                        .iter()
+                        .filter(|(_, body)| body.is_dynamic() && !body.is_sleeping())
+                        .count(),
+                    colliders: sim.collider_set.len(),
+                    impulse_joints: sim.impulse_joint_set.len(),
+                    contact_pairs: sim.narrow_phase.contact_pairs().count(),
+                    touching_pairs: sim
+                        .narrow_phase
+                        .contact_pairs()
+                        .filter(|pair| pair.has_any_active_contact())
+                        .count(),
+                });
+            }
 
             // Cleared only after a step actually ran: a skipped step must keep
             // the dirty flag so the next substep still executes.

@@ -13,9 +13,15 @@ log.workspace = true
 humantime.workspace = true
 
 # f64 变体（package 重命名，代码里 rapier3d:: 路径不变）：多簇大坐标场景下
-# f32 + 单一 floating origin 会退化到米级量化。f64 不支持 SoA SIMD（上游注释），只保留 parallel。
+# f32 + 单一 floating origin 会退化到米级量化。f64 不支持 SoA SIMD（上游注释）。
 rapier3d = { package = "rapier3d-f64", git = "https://github.com/ryanhcode/rapier", rev = "38e92f117590862481a53df6fc69a5d893e29186", features = [
-    "parallel",
+    # 不开 "parallel"：窄相（Sable 体素碰撞）只有个位数到几十个接触对，并行几乎无收益
+    # （2026-10-12 实测墙钟 ≈ 各回调耗时之和的 0.85），却让服务器线程在 fork-join 上等
+    # 普通优先级的 rayon worker——机器满载时单步因此被拖到 30～400 ms。串行时整步跑在
+    # 优先级更高的服务器线程上；另外接触事件 hook 经 JNI get_env() 回调 Java，只有服务器
+    # 线程挂在 JVM 上，并行窄相把它派到 worker 线程会直接 panic。
+    # Rapier 自带的分阶段计时（否则编译为空操作）；step_stats 记录慢步时读取。
+    "profiler",
 ] }
 
 rayon = "1.10.0"
