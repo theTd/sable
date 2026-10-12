@@ -666,6 +666,12 @@ public final class Rapier3D {
     static native void configSolverIterations(int solverIterations, int pgsIterations, int stabilizationIterations);
 
     @ApiStatus.Internal
+    public static native void configSleepSkip(boolean enabled);
+
+    @ApiStatus.Internal
+    public static native void configContactForceEvents(boolean enabled);
+
+    @ApiStatus.Internal
     static native void configMinIslandSize(int islandSize);
 
     @ApiStatus.Internal

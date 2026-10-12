@@ -2,6 +2,7 @@ package dev.ryanhcode.sable.api.sublevel;
 
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.SableConfig;
+import dev.ryanhcode.sable.SableServerConfig;
 import dev.ryanhcode.sable.api.SubLevelHelper;
 import dev.ryanhcode.sable.api.sublevel.ticket.SubLevelLoadingTicket;
 import dev.ryanhcode.sable.api.sublevel.ticket.SubLevelLoadingTicketType;
@@ -88,7 +89,23 @@ public class ServerSubLevelContainer extends SubLevelContainer {
     @Override
     public void tick() {
         super.tick();
+        if (!this.hasSubLevels() && this.canSkipObserverTicks()) {
+            return;
+        }
         this.holdingChunkMap.processChanges();
+    }
+
+    @Override
+    protected boolean canSkipObserverTicks() {
+        if (!SableServerConfig.SPEC.isLoaded() || !SableServerConfig.EMPTY_CONTAINER_FAST_PATH.getAsBoolean()) {
+            return false;
+        }
+
+        if (this.physics == null || this.holdingChunkMap == null) {
+            return false;
+        }
+
+        return !this.physics.hasPendingWork() && this.holdingChunkMap.isIdle();
     }
 
     /**

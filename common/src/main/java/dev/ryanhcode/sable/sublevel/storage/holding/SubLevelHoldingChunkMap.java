@@ -646,6 +646,16 @@ public class SubLevelHoldingChunkMap implements AutoCloseable {
         }
     }
 
+    /**
+     * @return whether no holding chunks are loaded and no chunk status changes are pending
+     */
+    public boolean isIdle() {
+        return this.loadedHoldingChunks.isEmpty()
+                && this.allHoldingSubLevels.isEmpty()
+                && this.chunksToUnload.isEmpty()
+                && this.chunksToLoad.isEmpty();
+    }
+
     public SubLevelStorage getStorage() {
         return this.storage;
     }

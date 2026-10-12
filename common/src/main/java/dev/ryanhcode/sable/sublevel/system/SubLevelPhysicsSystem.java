@@ -6,6 +6,7 @@ import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 import dev.ryanhcode.sable.api.physics.PhysicsPipeline;
 import dev.ryanhcode.sable.api.physics.PhysicsPipelineProvider;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
+import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.api.physics.mass.MassTracker;
 import dev.ryanhcode.sable.api.physics.object.ArbitraryPhysicsObject;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
@@ -14,6 +15,7 @@ import dev.ryanhcode.sable.api.sublevel.SubLevelObserver;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import dev.ryanhcode.sable.companion.math.Pose3d;
+import dev.ryanhcode.sable.companion.math.Pose3dc;
 import dev.ryanhcode.sable.mixinterface.plot.SubLevelContainerHolder;
 import dev.ryanhcode.sable.mixinterface.toast.SableToastableServer;
 import dev.ryanhcode.sable.physics.config.PhysicsConfigData;
@@ -30,6 +32,7 @@ import dev.ryanhcode.sable.sublevel.system.ticket.PhysicsChunkTicketManager;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import net.minecraft.CrashReport;
 import net.minecraft.CrashReportCategory;
@@ -47,10 +50,13 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.joml.Math;
 import org.joml.Quaterniond;
+import org.joml.Quaterniondc;
 import org.joml.Vector3d;
+import org.joml.Vector3dc;
 
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -109,9 +115,22 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      */
     private boolean paused;
     /**
+     * Whether a sub-level recovery is currently in progress on this system
+     */
+    private boolean recoveringSubLevel;
+    /**
+     * Sub-levels whose invalid-pose diagnostics have already been logged
+     */
+    private final Set<UUID> invalidPoseLoggedSubLevels = new ObjectOpenHashSet<>();
+    /**
      * The substep / physics tick we're currently on
      */
     private int currentSubstep;
+
+    /**
+     * Ticks elapsed since the last physics simulation run
+     */
+    private int physicsTickCounter;
 
     /**
      * Queued wake-ups for after the physics tick
@@ -231,27 +250,34 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         this.pipeline.tick();
 
         if (!this.paused) {
-            SubLevelPhysicsSystem.currentlySteppingSystem = this;
+            this.physicsTickCounter++;
 
-            // tick the pipeline physics
-            try {
-                this.tickPipelinePhysics(container);
-            } catch (final Exception e) {
-                final CrashReport crashReport = CrashReport.forThrowable(e, "Sable ticking physics");
-                final CrashReportCategory crashReportCategory = crashReport.addCategory("Current physics state");
-                crashReportCategory.setDetail("Dimension", this.level.dimension());
-                throw new ReportedException(crashReport);
+            if (this.config.physicsTickInterval <= 1 || this.physicsTickCounter >= this.config.physicsTickInterval) {
+                final int elapsedTicks = Math.max(1, Math.min(this.physicsTickCounter, this.config.physicsTickInterval));
+                this.physicsTickCounter = 0;
+
+                SubLevelPhysicsSystem.currentlySteppingSystem = this;
+
+                // tick the pipeline physics
+                try {
+                    this.tickPipelinePhysics(container, elapsedTicks);
+                } catch (final Exception e) {
+                    final CrashReport crashReport = CrashReport.forThrowable(e, "Sable ticking physics");
+                    final CrashReportCategory crashReportCategory = crashReport.addCategory("Current physics state");
+                    crashReportCategory.setDetail("Dimension", this.level.dimension());
+                    throw new ReportedException(crashReport);
+                }
+
+                SubLevelPhysicsSystem.currentlySteppingSystem = null;
             }
-
-            SubLevelPhysicsSystem.currentlySteppingSystem = null;
         }
     }
 
-    private void tickPipelinePhysics(final ServerSubLevelContainer container) {
+    private void tickPipelinePhysics(final ServerSubLevelContainer container, final int elapsedTicks) {
         this.pipeline.prePhysicsTicks();
 
         for (this.currentSubstep = 0; this.currentSubstep < this.config.substepsPerTick; this.currentSubstep++) {
-            final double substepTimeStep = 1.0 / 20.0 / this.config.substepsPerTick;
+            final double substepTimeStep = (double) elapsedTicks / 20.0 / this.config.substepsPerTick;
 
             for (final ServerSubLevel subLevel : container.getAllSubLevels()) {
                 if (subLevel.isRemoved()) continue;
@@ -283,7 +309,7 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
             // sub-levels could have been removed during the physics tick
             // we must therefore process removals every physics tick
             container.processSubLevelRemovals();
-            this.updateAllPoses(container);
+            this.updateAllPoses(container, elapsedTicks);
 
             for (final ArbitraryPhysicsObject object : this.queuedWakeUps) {
                 object.wakeUp();
@@ -297,11 +323,11 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         this.currentSubstep = this.config.substepsPerTick;
     }
 
-    private void updateAllPoses(final ServerSubLevelContainer container) {
+    private void updateAllPoses(final ServerSubLevelContainer container, final int elapsedTicks) {
         for (final ServerSubLevel subLevel : container.getAllSubLevels()) {
             if (subLevel.isRemoved()) continue;
 
-            this.updatePose(subLevel);
+            this.updatePose(subLevel, elapsedTicks);
         }
     }
 
@@ -311,24 +337,24 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      * @param serverSubLevel the sub-level to update
      */
     public void updatePose(final ServerSubLevel serverSubLevel) {
+        this.updatePose(serverSubLevel, 1);
+    }
+
+    private void updatePose(final ServerSubLevel serverSubLevel, final int elapsedTicks) {
         this.pipeline.readPose(serverSubLevel, this.storagePose);
 
-        {
-            final Vector3d position = this.storagePose.position();
-            final Quaterniond orientation = this.storagePose.orientation();
+        if (!isValidPose(this.storagePose)) {
+            Sable.LOGGER.info("Invalid position {} or orientation {} received for sub-level {} from pipeline.", this.storagePose.position(), this.storagePose.orientation(), serverSubLevel);
+            this.logInvalidPoseDetailsOnce(serverSubLevel);
+            if (!this.recoverSubLevel(serverSubLevel)) {
+                return;
+            }
+            this.pipeline.readPose(serverSubLevel, this.storagePose);
 
-            if (Double.isNaN(position.x) ||
-                    Double.isNaN(position.y) ||
-                    Double.isNaN(position.z) ||
-                    Double.isNaN(orientation.x) ||
-                    Double.isNaN(orientation.y) ||
-                    Double.isNaN(orientation.z) ||
-                    Double.isNaN(orientation.w)) {
-                Sable.LOGGER.info("Invalid position {} or orientation {} received for sub-level {} from pipeline.", this.storagePose.position(), this.storagePose.orientation(), serverSubLevel);
-                if (!this.recoverSubLevel(serverSubLevel)) {
-                    return;
-                }
-                this.pipeline.readPose(serverSubLevel, this.storagePose);
+            // Recovery could not produce a valid pose either; keep the last known good
+            // logical pose instead of poisoning it with the invalid one.
+            if (!isValidPose(this.storagePose)) {
+                return;
             }
         }
 
@@ -348,8 +374,38 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         }
 
         // [m/t] to [m/s]
-        serverSubLevel.latestLinearVelocity.mul(20.0);
-        serverSubLevel.latestAngularVelocity.mul(20.0);
+        serverSubLevel.latestLinearVelocity.mul(20.0 / elapsedTicks);
+        serverSubLevel.latestAngularVelocity.mul(20.0 / elapsedTicks);
+    }
+
+    /**
+     * @return whether every position and orientation component of the pose is a valid (non-NaN) number
+     */
+    private static boolean isValidPose(final Pose3dc pose) {
+        final Vector3dc position = pose.position();
+        final Quaterniondc orientation = pose.orientation();
+        return !Double.isNaN(position.x()) && !Double.isNaN(position.y()) && !Double.isNaN(position.z())
+                && !Double.isNaN(orientation.x()) && !Double.isNaN(orientation.y()) && !Double.isNaN(orientation.z()) && !Double.isNaN(orientation.w());
+    }
+
+    /**
+     * Logs detailed diagnostics for the first invalid pose read of each sub-level, to help
+     * trace where the first NaN came from.
+     */
+    private void logInvalidPoseDetailsOnce(final ServerSubLevel serverSubLevel) {
+        if (!this.invalidPoseLoggedSubLevels.add(serverSubLevel.getUniqueId())) {
+            return;
+        }
+
+        final MassData massData = serverSubLevel.getMassTracker();
+        Sable.LOGGER.info(
+                "Invalid pose diagnostics for sub-level {}: pipelinePose=[pos={}, rot={}], logicalPose={} (valid={}), lastPose={} (valid={}), latestLinearVelocity={}, latestAngularVelocity={}, massData={}",
+                serverSubLevel,
+                this.storagePose.position(), this.storagePose.orientation(),
+                serverSubLevel.logicalPose(), isValidPose(serverSubLevel.logicalPose()),
+                serverSubLevel.lastPose(), isValidPose(serverSubLevel.lastPose()),
+                serverSubLevel.latestLinearVelocity, serverSubLevel.latestAngularVelocity,
+                massData == null ? "null" : "mass=" + massData.getMass() + " inverseMass=" + massData.getInverseMass() + " centerOfMass=" + massData.getCenterOfMass() + " inertiaTensor=" + massData.getInertiaTensor());
     }
 
     /**
@@ -359,45 +415,65 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      * @param serverSubLevel the sub-level to recover
      */
     public boolean recoverSubLevel(final ServerSubLevel serverSubLevel) {
-        Sable.LOGGER.info("Attempting to recover physics state for sub-level {}. Removing and re-adding from pipeline.", serverSubLevel);
-
-        final MinecraftServer server = this.level.getServer();
-        if (server instanceof final SableToastableServer toastable) {
-            toastable.sable$reportSubLevelPhysicsFailure(serverSubLevel);
-        }
-
-        // The sub-level has NaN'ed!
-        // We need to remove it and re-add from the physics world.
-        this.pipeline.remove(serverSubLevel);
-
-        serverSubLevel.buildMassTracker();
-        this.pipeline.add(serverSubLevel, serverSubLevel.logicalPose());
-
-        if (serverSubLevel.getMassTracker().getCenterOfMass() == null) {
-            // there's no center of mass for the body, which means it's effectively removed
-            Sable.LOGGER.info("Sub-level recovery added sub-level to pipeline, but center of mass is null. Aborting and removing sub-level.");
-            SubLevelContainer.getContainer(this.level).removeSubLevel(serverSubLevel, SubLevelRemovalReason.REMOVED);
+        // Recovery re-enters here through the mass upload in PhysicsPipeline.add; never recurse.
+        if (this.recoveringSubLevel) {
             return false;
         }
+        this.recoveringSubLevel = true;
+        try {
+            Sable.LOGGER.info("Attempting to recover physics state for sub-level {}. Removing and re-adding from pipeline.", serverSubLevel);
 
-        final ServerLevelPlot plot = serverSubLevel.getPlot();
+            final MinecraftServer server = this.level.getServer();
+            if (server instanceof final SableToastableServer toastable) {
+                toastable.sable$reportSubLevelPhysicsFailure(serverSubLevel);
+            }
 
-        for (final PlotChunkHolder holder : plot.getLoadedChunks()) {
-            final LevelChunk chunk = holder.getChunk();
-            final ChunkPos global = chunk.getPos();
+            // The sub-level has NaN'ed!
+            // We need to remove it and re-add from the physics world.
+            this.pipeline.remove(serverSubLevel);
 
-            final LevelChunkSection[] levelChunkSections = chunk.getSections();
-            for (int i = 0; i < chunk.getSectionsCount(); i++) {
-                final LevelChunkSection section = levelChunkSections[i];
+            final Pose3d logicalPose = serverSubLevel.logicalPose();
+            if (!isValidPose(logicalPose)) {
+                // The logical pose itself got poisoned; reset it to the last known good pose
+                logicalPose.set(serverSubLevel.lastPose());
+            }
+            if (!isValidPose(logicalPose)) {
+                Sable.LOGGER.info("Sub-level {} has no valid pose to recover to. Removing it.", serverSubLevel);
+                SubLevelContainer.getContainer(this.level).removeSubLevel(serverSubLevel, SubLevelRemovalReason.REMOVED);
+                return false;
+            }
 
-                if (!section.hasOnlyAir()) {
-                    final int sectionY = chunk.getSectionYFromSectionIndex(i);
-                    this.pipeline.handleChunkSectionAddition(section, global.x, sectionY, global.z, true);
+            serverSubLevel.buildMassTracker();
+            this.pipeline.add(serverSubLevel, logicalPose);
+
+            if (serverSubLevel.getMassTracker().getCenterOfMass() == null) {
+                // there's no center of mass for the body, which means it's effectively removed
+                Sable.LOGGER.info("Sub-level recovery added sub-level to pipeline, but center of mass is null. Aborting and removing sub-level.");
+                SubLevelContainer.getContainer(this.level).removeSubLevel(serverSubLevel, SubLevelRemovalReason.REMOVED);
+                return false;
+            }
+
+            final ServerLevelPlot plot = serverSubLevel.getPlot();
+
+            for (final PlotChunkHolder holder : plot.getLoadedChunks()) {
+                final LevelChunk chunk = holder.getChunk();
+                final ChunkPos global = chunk.getPos();
+
+                final LevelChunkSection[] levelChunkSections = chunk.getSections();
+                for (int i = 0; i < chunk.getSectionsCount(); i++) {
+                    final LevelChunkSection section = levelChunkSections[i];
+
+                    if (!section.hasOnlyAir()) {
+                        final int sectionY = chunk.getSectionYFromSectionIndex(i);
+                        this.pipeline.handleChunkSectionAddition(section, global.x, sectionY, global.z, true);
+                    }
                 }
             }
-        }
 
-        return true;
+            return true;
+        } finally {
+            this.recoveringSubLevel = false;
+        }
     }
 
     private void tickPunchCooldowns() {
@@ -594,6 +670,13 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
 
     public Iterable<ArbitraryPhysicsObject> getArbitraryObjects() {
         return this.arbitraryObjects;
+    }
+
+    /**
+     * @return whether this system has per-tick work pending even when no sub-levels are loaded
+     */
+    public boolean hasPendingWork() {
+        return !this.arbitraryObjects.isEmpty() || this.ticketManager.hasPendingWork();
     }
 
     public ServerLevel getLevel() {

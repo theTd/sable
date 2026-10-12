@@ -32,7 +32,32 @@ public class PhysicsConfigData {
      */
     public int substepsPerTick = 2;
 
+    /**
+     * Whether the physics engine skips simulating sleeping bodies.
+     */
+    public boolean physicsSleepSkip = true;
+
+    /**
+     * Whether the physics engine reports contact force events.
+     */
+    public boolean contactForceEvents = true;
+
+    /**
+     * Game ticks between physics simulation runs. Values above 1 simulate with a proportionally larger time step.
+     */
+    public int physicsTickInterval = 1;
+
     public void updateFromConfig() {
+        if (!SableServerConfig.SPEC.isLoaded()) {
+            return;
+        }
+
         this.substepsPerTick = SableServerConfig.SUB_LEVEL_SUBSTEPS_PER_TICK.getAsInt();
+        this.solverIterations = SableServerConfig.SOLVER_ITERATIONS.getAsInt();
+        this.pgsIterations = SableServerConfig.PGS_ITERATIONS.getAsInt();
+        this.stabilizationIterations = SableServerConfig.STABILIZATION_ITERATIONS.getAsInt();
+        this.physicsSleepSkip = SableServerConfig.PHYSICS_SLEEP_SKIP.getAsBoolean();
+        this.contactForceEvents = SableServerConfig.CONTACT_FORCE_EVENTS.getAsBoolean();
+        this.physicsTickInterval = SableServerConfig.PHYSICS_TICK_INTERVAL.getAsInt();
     }
 }

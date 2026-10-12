@@ -3,6 +3,7 @@ package dev.ryanhcode.sable.command;
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import dev.ryanhcode.sable.SableServerConfig;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.physics.config.PhysicsConfigData;
 import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
@@ -58,6 +59,10 @@ public class SableConfigCommands {
                                     final PhysicsConfigData config = physicsSystem.getConfig();
                                     config.solverIterations = IntegerArgumentType.getInteger(ctx, "iterations");
                                     physicsSystem.onConfigUpdated();
+                                    if (SableServerConfig.SPEC.isLoaded()) {
+                                        SableServerConfig.SOLVER_ITERATIONS.set(config.solverIterations);
+                                        SableServerConfig.SPEC.save();
+                                    }
                                     return 0;
                                 }))
                 )
@@ -68,6 +73,10 @@ public class SableConfigCommands {
                                     final PhysicsConfigData config = physicsSystem.getConfig();
                                     config.stabilizationIterations = IntegerArgumentType.getInteger(ctx, "iterations");
                                     physicsSystem.onConfigUpdated();
+                                    if (SableServerConfig.SPEC.isLoaded()) {
+                                        SableServerConfig.STABILIZATION_ITERATIONS.set(config.stabilizationIterations);
+                                        SableServerConfig.SPEC.save();
+                                    }
                                     return 0;
                                 }))
                 )
@@ -78,6 +87,10 @@ public class SableConfigCommands {
                                     final PhysicsConfigData config = physicsSystem.getConfig();
                                     config.pgsIterations = IntegerArgumentType.getInteger(ctx, "iterations");
                                     physicsSystem.onConfigUpdated();
+                                    if (SableServerConfig.SPEC.isLoaded()) {
+                                        SableServerConfig.PGS_ITERATIONS.set(config.pgsIterations);
+                                        SableServerConfig.SPEC.save();
+                                    }
                                     return 0;
                                 }))
                 )
@@ -88,6 +101,10 @@ public class SableConfigCommands {
                                     final PhysicsConfigData config = physicsSystem.getConfig();
                                     config.substepsPerTick = IntegerArgumentType.getInteger(ctx, "substeps");
                                     physicsSystem.onConfigUpdated();
+                                    if (SableServerConfig.SPEC.isLoaded()) {
+                                        SableServerConfig.SUB_LEVEL_SUBSTEPS_PER_TICK.set(config.substepsPerTick);
+                                        SableServerConfig.SPEC.save();
+                                    }
                                     return 0;
                                 }))
                 )

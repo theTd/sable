@@ -16,7 +16,7 @@ use rapier3d::math::Vec3;
 use rapier3d::pipeline::PhysicsPipeline;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 pub type LevelColliderID = usize;
@@ -122,6 +122,18 @@ pub struct PhysicsScene {
 
     /// Universal linear drag applied to all bodies
     pub universal_drag: Real,
+
+    /// Set when a kinematic contraption's pose actually changed since the last
+    /// executed pipeline step. Kinematic motion only moves colliders, so it does
+    /// not wake sleeping dynamic bodies by itself; the sleep-skip step early-out
+    /// must not fire while this is set, or contacts under moving platforms would
+    /// never be discovered. Cleared after an executed `pipeline.step`.
+    pub kinematic_dirty: AtomicBool,
+
+    /// One-shot warning latch for the NaN defense-in-depth path: set the first
+    /// time a non-finite origin is observed, so the incident is logged once per
+    /// scene instead of every tick.
+    pub nan_origin_warned: AtomicBool,
 }
 
 #[derive(Default)]

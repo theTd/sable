@@ -4,6 +4,7 @@ import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.SableCommonEvents;
 import dev.ryanhcode.sable.SableConfig;
 import dev.ryanhcode.sable.SableServerConfig;
+import dev.ryanhcode.sable.api.physics.SablePhysicsTuning;
 import dev.ryanhcode.sable.command.SableCommand;
 import dev.ryanhcode.sable.command.argument.SubLevelSelectorModifiers;
 import dev.ryanhcode.sable.index.SableAttributes;
@@ -11,18 +12,21 @@ import dev.ryanhcode.sable.physics.config.FloatingBlockMaterialDataHandler;
 import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertiesDefinitionLoader;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.CrashReportCallables;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AddReloadListenerEvent;
 import net.neoforged.neoforge.event.OnDatapackSyncEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 
 @Mod(Sable.MOD_ID)
 public final class SableNeoForge {
@@ -45,7 +49,25 @@ public final class SableNeoForge {
         modContainer.registerConfig(ModConfig.Type.COMMON, SableConfig.SPEC);
         modContainer.registerConfig(ModConfig.Type.SERVER, SableServerConfig.SPEC);
 
+        modBus.addListener(ModConfigEvent.Loading.class, this::onServerConfigUpdated);
+        modBus.addListener(ModConfigEvent.Reloading.class, this::onServerConfigUpdated);
+
         CrashReportCallables.registerHeader(Sable::getCrashHeader);
+    }
+
+    private void onServerConfigUpdated(final ModConfigEvent event) {
+        if (event.getConfig().getSpec() != SableServerConfig.SPEC) {
+            return;
+        }
+
+        final MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) {
+            // Null while the server isn't running; physics systems read the config when they initialize
+            return;
+        }
+
+        // Config events fire off the server thread; apply on the server thread
+        server.execute(() -> SablePhysicsTuning.applyToAllLevels(server));
     }
 
     public void registerReloadListeners(final AddReloadListenerEvent event) {

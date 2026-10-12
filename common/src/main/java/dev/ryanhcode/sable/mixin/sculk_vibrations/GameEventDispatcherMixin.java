@@ -7,6 +7,8 @@ import com.llamalad7.mixinextras.sugar.Share;
 import com.llamalad7.mixinextras.sugar.ref.LocalIntRef;
 import com.llamalad7.mixinextras.sugar.ref.LocalRef;
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.SableServerConfig;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import dev.ryanhcode.sable.companion.math.BoundingBox3i;
@@ -49,6 +51,14 @@ public class GameEventDispatcherMixin {
 
     @WrapMethod(method = "post")
     private void sable$visitShipListeners(final Holder<GameEvent> gameEvent, final Vec3 pos, final GameEvent.Context context, final Operation<Void> original, @Share("bb") final LocalRef<BoundingBox3ic> bbRef) {
+        if (SableServerConfig.SPEC.isLoaded() && SableServerConfig.EMPTY_CONTAINER_FAST_PATH.getAsBoolean()) {
+            final SubLevelContainer container = SubLevelContainer.getContainer(this.level);
+            if (container == null || !container.hasSubLevels()) {
+                original.call(gameEvent, pos, context);
+                return;
+            }
+        }
+
         final Vec3 globalPos = Sable.HELPER.projectOutOfSubLevel(this.level, pos);
         original.call(gameEvent, globalPos, context);
         if (bbRef.get() != null) {

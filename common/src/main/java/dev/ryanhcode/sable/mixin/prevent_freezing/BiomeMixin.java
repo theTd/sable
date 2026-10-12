@@ -4,6 +4,8 @@ import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import dev.ryanhcode.sable.ActiveSableCompanion;
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.SableServerConfig;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
@@ -22,6 +24,13 @@ public class BiomeMixin {
         }
 
         if (levelReader instanceof final Level level) {
+            if (SableServerConfig.SPEC.isLoaded() && SableServerConfig.BIOME_PROJECTION_FAST_PATH.getAsBoolean()) {
+                final SubLevelContainer container = SubLevelContainer.getContainer(level);
+                if (container == null || !container.hasSubLevels()) {
+                    return true;
+                }
+            }
+
             final ActiveSableCompanion helper = Sable.HELPER;
             final SubLevel parent = helper.getContaining(level, blockPos);
             BlockPos projectedPos = blockPos;

@@ -30,6 +30,12 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
             panic!("No body with given handle!");
         };
 
+        // Sleeping bodies do not move; applying buoyancy/drag to them cannot
+        // change anything (forces on a sleeping body are ignored by the solver).
+        if physics_state.sleep_skip && body.is_sleeping() {
+            continue;
+        }
+
         let Some(center_of_mass) = info.center_of_mass else {
             panic!("No center of mass for body!");
         };

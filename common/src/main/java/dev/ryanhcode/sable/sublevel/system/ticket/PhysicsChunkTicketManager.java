@@ -25,9 +25,8 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.Vec3;
-import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 
 import java.util.Collection;
@@ -204,7 +203,7 @@ public class PhysicsChunkTicketManager {
                         if (index >= 0 && index < level.getSectionsCount()) {
                             final PhysicsChunkTicket ticket = this.addTicket(level, pipeline, sectionPos, x, y, z, index, gameTime);
 
-                            if (SubLevelPhysicsSystem.USE_TICKETS_FOR_QUERIES) {
+                            if (SubLevelPhysicsSystem.USE_TICKETS_FOR_QUERIES && ticket != null) {
                                 ticket.residentSubLevels().add(subLevel);
                             }
                         }
@@ -237,7 +236,9 @@ public class PhysicsChunkTicketManager {
             distanceManager.addTicket(chunkLong, newChunkTicket);
             distanceManager.tickingTicketsTracker.addTicket(chunkLong, newChunkTicket);
 
-            level.getChunk(x, z, ChunkStatus.FULL, true);
+            // The tickets above drive the chunk load asynchronously; never block the server
+            // thread on it here - a chunk whose generation future never completes would
+            // freeze the whole thread.
         } else {
             boolean any = false;
 
@@ -309,7 +310,7 @@ public class PhysicsChunkTicketManager {
         }
     }
 
-    private @NotNull PhysicsChunkTicket addTicket(final Level level,
+    private @Nullable PhysicsChunkTicket addTicket(final Level level,
                                                   final PhysicsPipeline pipeline,
                                                   final SectionPos sectionPos,
                                                   final int x,
@@ -319,7 +320,13 @@ public class PhysicsChunkTicketManager {
                                                   final long gameTime) {
         PhysicsChunkTicket existingTicket = this.physicsChunks.get(sectionPos);
         if (existingTicket == null) {
-            final LevelChunk chunk = level.getChunk(x, z);
+            // Never block the server thread on a chunk load here; a chunk whose generation
+            // future never completes would freeze the whole thread. The section is uploaded
+            // on a later tick once the chunk is present.
+            final LevelChunk chunk = ((ServerLevel) level).getChunkSource().getChunkNow(x, z);
+            if (chunk == null) {
+                return null;
+            }
 
             pipeline.handleChunkSectionAddition(chunk.getSection(index), x, y, z, false);
 
@@ -332,6 +339,13 @@ public class PhysicsChunkTicketManager {
 
         existingTicket.setLastInhabitedTick(gameTime);
         return existingTicket;
+    }
+
+    /**
+     * @return whether any physics chunk tickets or force-loaded inhabited chunks are still tracked
+     */
+    public boolean hasPendingWork() {
+        return !this.physicsChunks.isEmpty() || !this.forcedInhabitedChunks.isEmpty();
     }
 
     /**

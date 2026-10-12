@@ -433,6 +433,13 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
     public void teleport(final PhysicsPipelineBody body, final Vector3dc position, final Quaterniondc orientation) {
         this.assertBodyValid(body);
 
+        // A NaN teleport would permanently poison the scene's floating origin; drop it
+        if (Double.isNaN(position.x()) || Double.isNaN(position.y()) || Double.isNaN(position.z())
+                || Double.isNaN(orientation.x()) || Double.isNaN(orientation.y()) || Double.isNaN(orientation.z()) || Double.isNaN(orientation.w())) {
+            Sable.LOGGER.warn("Ignoring invalid teleport of {} to {} / {}", body, position, orientation);
+            return;
+        }
+
         Rapier3D.teleportObject(this.scene.handle(), Rapier3D.getID(body), position.x(), position.y(), position.z(), orientation.x(), orientation.y(), orientation.z(), orientation.w());
         if (body instanceof final ServerSubLevel subLevel) {
             subLevel.logicalPose().position().set(position);
@@ -563,6 +570,8 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
         Rapier3D.configFrequencyAndDamping(data.contactSpringFrequency, data.contactSpringDampingRatio);
         Rapier3D.configSolverIterations(data.solverIterations, data.pgsIterations, data.stabilizationIterations);
         Rapier3D.configMinIslandSize(data.minDynamicBodiesPerIsland);
+        Rapier3D.configSleepSkip(data.physicsSleepSkip);
+        Rapier3D.configContactForceEvents(data.contactForceEvents);
     }
 
     /**
@@ -603,6 +612,7 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
         final Vector3d linVel = pos.sub(lastPosition, new Vector3d());
         final Vector3d angVel = SableMathUtils.getAngularVelocity(lastOrientation, rot, new Vector3d());
 
+        // [m/t] to [m/s]; with physics_tick_interval > 1 these sampled velocities are proportionally larger (opt-in limitation)
         linVel.mul(20.0);
         angVel.mul(20.0);
         rot.transformInverse(linVel);

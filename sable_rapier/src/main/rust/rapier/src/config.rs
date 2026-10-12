@@ -1,6 +1,6 @@
 use jni::JNIEnv;
 use jni::objects::JClass;
-use jni::sys::{jdouble, jint};
+use jni::sys::{jboolean, jdouble, jint};
 use marten::Real;
 
 use crate::get_physics_state_mut;
@@ -57,4 +57,26 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_con
     get_physics_state_mut()
         .integration_parameters
         .min_island_size = island_size as usize;
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_configSleepSkip<
+    'local,
+>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    enabled: jboolean,
+) {
+    get_physics_state_mut().sleep_skip = enabled != 0;
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_configContactForceEvents<
+    'local,
+>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    enabled: jboolean,
+) {
+    get_physics_state_mut().contact_force_events = enabled != 0;
 }

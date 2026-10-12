@@ -47,9 +47,9 @@ public interface PhysicsPipeline {
     void prePhysicsTicks();
 
     /**
-     * Runs a physics substep with a time step of {@code 1.0 / 20.0 / substeps} seconds.
+     * Runs a physics substep with a time step of {@code elapsedTicks / 20.0 / substeps} seconds.
      *
-     * @param timeStep the time step of this physics substep ({@code 1.0 / 20.0 / substeps}) [s]
+     * @param timeStep the time step of this physics substep [s]
      */
     void physicsTick(double timeStep);
 

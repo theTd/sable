@@ -1,13 +1,34 @@
-use crate::scene::PhysicsScene;
+use crate::scene::{PhysicsScene, SableSceneData};
+use log::warn;
 use rapier3d::glamx::DVec3;
 use rapier3d::math::{Pose3, Real};
+use std::sync::atomic::Ordering;
 
 /// sim 域坐标不变式：|translation| ≤ 该阈值（f64 下 ULP ~4.6e-13，纯保险）
 pub const REBASE_THRESHOLD: Real = 2048.0;
 
+/// 存量自愈：origin 已被毒化为非有限值时重置为 0 并 warn 一次（每场景）。
+/// body 平移保持不动——各 body 的 sim 域坐标此后即世界坐标，场景恢复为
+/// 有限但可能带整体偏移的状态，供 Java 侧 lastPose 恢复逻辑接管。
+/// 调用时需已持有 sable_data 写锁。
+fn heal_nan_origin_locked(sable: &mut SableSceneData, scene: &PhysicsScene) {
+    if !sable.origin.is_finite() {
+        sable.origin = DVec3::ZERO;
+        if !scene.nan_origin_warned.swap(true, Ordering::Relaxed) {
+            warn!("scene origin was non-finite; reset to 0 (scene is finite again but may be globally offset)");
+        }
+    }
+}
+
 /// 把整个场景平移 c（f64）：动态 body 与 static_mount wrt 减 c，origin 加 c。
 /// ground 不动（identity）。锁序 sable write → sim write，调用时不得持有任一锁。
+/// c 含非有限分量时整体拒绝（NaN 纵深防御的最后闸门）。
 pub fn rebase_by(scene: &PhysicsScene, c: DVec3) {
+    if !c.is_finite() {
+        warn!("rebase_by rejected non-finite shift {c:?}; scene left unchanged");
+        return;
+    }
+
     let mut sable = scene.sable_data.write().unwrap();
     let mut sim = scene.sim_data.write().unwrap();
 
@@ -46,12 +67,19 @@ pub fn rebase_by(scene: &PhysicsScene, c: DVec3) {
 /// step() 内周期触发：动态 body / rope point / static_mount wrt 的 translation
 /// 包围盒最远分量 > REBASE_THRESHOLD 时，按包围盒中心 rebase。
 pub fn rebase_if_needed(scene: &PhysicsScene) {
-    let sable = scene.sable_data.write().unwrap();
+    let mut sable = scene.sable_data.write().unwrap();
     let sim = scene.sim_data.write().unwrap();
+
+    heal_nan_origin_locked(&mut sable, scene);
 
     let mut min = rapier3d::math::Vec3::splat(f64::MAX);
     let mut max = rapier3d::math::Vec3::splat(f64::MIN);
+    // 非有限的 translation 不进包围盒：个别 body 毒化不再连累整场景的重定基
+    // 能力（否则 min/max 恒 NaN，之后的 rebase 全部被 NaN 比较吞掉）。
     let mut consider = |t: &rapier3d::math::Vec3| {
+        if !t.is_finite() {
+            return;
+        }
         min = min.min(*t);
         max = max.max(*t);
     };
@@ -94,9 +122,17 @@ pub fn rebase_if_needed(scene: &PhysicsScene) {
 /// 绝对位姿 writer 的 f64 精度闭环：若 |W − origin| 超阈值，先以 c = W − origin
 /// rebase（新体恰好落在 0 附近，origin := W，f64 精确），再写入 sim 域位姿。
 /// 调用时不得持有任一锁（writer 用独立 with_handle 作用域先行调用）。
+/// w 含非有限分量时拒绝 rebase（否则 origin 会被永久写成 NaN，毒化全场景）。
 pub fn ensure_origin_near(scene: &PhysicsScene, w: &DVec3) {
+    if !w.is_finite() {
+        if !scene.nan_origin_warned.swap(true, Ordering::Relaxed) {
+            warn!("ensure_origin_near rejected non-finite target {w:?}; rebase skipped");
+        }
+        return;
+    }
     {
-        let sable = scene.sable_data.write().unwrap();
+        let mut sable = scene.sable_data.write().unwrap();
+        heal_nan_origin_locked(&mut sable, scene);
         let d = *w - sable.origin;
         if d.x.abs() <= REBASE_THRESHOLD
             && d.y.abs() <= REBASE_THRESHOLD
@@ -183,6 +219,8 @@ mod tests {
             current_step_vm: None,
             gravity: Vec3::new(0.0, -9.8, 0.0),
             universal_drag: 0.0,
+            kinematic_dirty: std::sync::atomic::AtomicBool::new(false),
+            nan_origin_warned: std::sync::atomic::AtomicBool::new(false),
             manifold_info_map,
         };
 
@@ -424,5 +462,86 @@ mod tests {
             sim.rigid_body_set.get(h).unwrap().translation()
         };
         assert_eq!(t1_before, t1_after);
+    }
+
+    #[test]
+    fn ensure_origin_near_rejects_nonfinite_w() {
+        let scene = make_scene();
+        ensure_origin_near(&scene, &DVec3::new(f64::NAN, 64.0, 40000.0));
+        ensure_origin_near(&scene, &DVec3::new(40000.0, f64::INFINITY, 40000.0));
+        assert_eq!(scene.sable_data.read().unwrap().origin, DVec3::ZERO);
+
+        // 正常路径不变：全有限的远 w 仍精确 rebase
+        let w = DVec3::new(40000.0, 64.0, 40000.0);
+        ensure_origin_near(&scene, &w);
+        assert_eq!(scene.sable_data.read().unwrap().origin, w);
+    }
+
+    #[test]
+    fn rebase_by_rejects_nonfinite_c() {
+        let scene = make_scene();
+        let h = insert_dynamic(&scene, 1, Vec3::new(5.0, 6.0, 7.0));
+        rebase_by(&scene, DVec3::new(f64::NAN, 1.0, 2.0));
+
+        let t = scene
+            .sim_data
+            .read()
+            .unwrap()
+            .rigid_body_set
+            .get(h)
+            .unwrap()
+            .translation();
+        assert_eq!(t, Vec3::new(5.0, 6.0, 7.0));
+        assert_eq!(scene.sable_data.read().unwrap().origin, DVec3::ZERO);
+    }
+
+    #[test]
+    fn rebase_if_needed_heals_nonfinite_origin() {
+        let scene = make_scene();
+        let h = insert_dynamic(&scene, 1, Vec3::new(10.0, 0.0, 0.0));
+        scene.sable_data.write().unwrap().origin =
+            DVec3::new(f64::NAN, 0.0, 0.0);
+
+        rebase_if_needed(&scene);
+        assert_eq!(scene.sable_data.read().unwrap().origin, DVec3::ZERO);
+        // body 平移不被自愈改动
+        let t = scene
+            .sim_data
+            .read()
+            .unwrap()
+            .rigid_body_set
+            .get(h)
+            .unwrap()
+            .translation();
+        assert_eq!(t, Vec3::new(10.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn rebase_if_needed_skips_nonfinite_translations() {
+        let scene = make_scene();
+        let h_ok = insert_dynamic(&scene, 1, Vec3::new(3000.0, 0.0, 0.0));
+        let h_nan = insert_dynamic(&scene, 2, Vec3::new(0.0, 0.0, 0.0));
+        scene
+            .sim_data
+            .write()
+            .unwrap()
+            .rigid_body_set
+            .get_mut(h_nan)
+            .unwrap()
+            .set_translation(Vec3::new(f64::NAN, 0.0, 0.0), false);
+
+        // 毒化 body 不拖垮健康 body 的重定基：h_ok 超出阈值仍触发 rebase
+        rebase_if_needed(&scene);
+        let t_ok = scene
+            .sim_data
+            .read()
+            .unwrap()
+            .rigid_body_set
+            .get(h_ok)
+            .unwrap()
+            .translation();
+        assert!(t_ok.is_finite());
+        assert!(t_ok.length() <= REBASE_THRESHOLD);
+        assert!(scene.sable_data.read().unwrap().origin.is_finite());
     }
 }

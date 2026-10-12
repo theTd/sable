@@ -105,9 +105,16 @@ public class MergedMassTracker implements MassData {
     }
 
     private void uploadData() {
-        if (this.centerOfMass != null && (this.mass != this.lastMass ||
+        // Never upload degenerate mass data: a zero mass or NaN center of mass would poison
+        // the physics body, and through the teleport below the whole scene's floating origin
+        if (this.centerOfMass == null || !(this.mass > 0.0) || !Double.isFinite(this.mass)
+                || Double.isNaN(this.centerOfMass.x) || Double.isNaN(this.centerOfMass.y) || Double.isNaN(this.centerOfMass.z)) {
+            return;
+        }
+
+        if (this.mass != this.lastMass ||
                 !Objects.equals(this.lastCenterOfMass, this.centerOfMass) ||
-                !Objects.equals(this.lastInertiaTensor, this.inertiaTensor))) {
+                !Objects.equals(this.lastInertiaTensor, this.inertiaTensor)) {
             if (this.lastCenterOfMass == null || this.lastInertiaTensor == null) {
                 this.lastCenterOfMass = new Vector3d(this.centerOfMass);
                 this.lastInertiaTensor = new Matrix3d(this.inertiaTensor);

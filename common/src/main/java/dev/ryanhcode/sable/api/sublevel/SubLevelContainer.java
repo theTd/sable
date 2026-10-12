@@ -51,6 +51,10 @@ public abstract class SubLevelContainer {
      */
     private final List<SubLevel> allSubLevels = new ReferenceArrayList<>();
     /**
+     * Whether any sub-levels are currently loaded in the plotgrid
+     */
+    private volatile boolean hasSubLevels;
+    /**
      * All of the loaded sub-levels in the plotgrid, by uuid
      */
     private final Map<UUID, SubLevel> subLevelsByUUID = new Object2ObjectOpenHashMap<>();
@@ -144,7 +148,25 @@ public abstract class SubLevelContainer {
         this.allSubLevels.forEach(SubLevel::tick);
         this.processSubLevelRemovals();
 
+        if (!this.hasSubLevels && this.canSkipObserverTicks()) {
+            return;
+        }
+
         this.observers.forEach(observer -> observer.tick(this));
+    }
+
+    /**
+     * @return whether observer ticks can be skipped while no sub-levels are loaded
+     */
+    protected boolean canSkipObserverTicks() {
+        return false;
+    }
+
+    /**
+     * @return whether any sub-levels are currently loaded in the plotgrid
+     */
+    public boolean hasSubLevels() {
+        return this.hasSubLevels;
     }
 
     /**
@@ -262,6 +284,7 @@ public abstract class SubLevelContainer {
         this.subLevels[index] = subLevel;
         this.getOccupancy().set(index);
         this.allSubLevels.add(subLevel);
+        this.hasSubLevels = true;
         this.subLevelsByUUID.put(subLevel.getUniqueId(), subLevel);
         this.observers.forEach(observer -> observer.onSubLevelAdded(subLevel));
 
@@ -490,6 +513,7 @@ public abstract class SubLevelContainer {
         final int index = this.getIndex(x, z);
         this.subLevels[index] = null;
         this.allSubLevels.remove(subLevel);
+        this.hasSubLevels = !this.allSubLevels.isEmpty();
         this.subLevelsByUUID.remove(subLevel.getUniqueId());
 
         if (reason == SubLevelRemovalReason.REMOVED) {

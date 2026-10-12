@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JDoubleArray, JIntArray};
@@ -16,6 +17,14 @@ use crate::groups::LEVEL_GROUP;
 use crate::scene::{LevelColliderID, SableSceneData};
 use crate::{ActiveLevelColliderInfo, with_handle};
 use crate::floating_origin;
+
+/// Motion thresholds for marking a kinematic contraption pose dirty, mirroring
+/// the Java upload gate in `RapierPhysicsPipeline.updateContraptionPose`
+/// (`DISTANCE_THRESHOLD`/`ANGLE_THRESHOLD` = 1e-7). As on the Java side the
+/// distance is compared squared while the angle is compared against the square
+/// of the threshold (quirk preserved deliberately).
+const KINEMATIC_DIRTY_DISTANCE_THRESHOLD: Real = 1e-7;
+const KINEMATIC_DIRTY_ANGLE_THRESHOLD: Real = 1e-7;
 
 macro_rules! extract_jdouble_array {
     ($env:expr, $jarr:expr, $len:expr) => {{
@@ -56,6 +65,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     _pose: JDoubleArray<'local>,
 ) {
     with_handle(handle, |scene| {
+        let contact_force_events = crate::get_physics_state().contact_force_events;
         let mut sim_data = scene.sim_data.write().unwrap();
         let sim_data = &mut *sim_data;
         let mut sable_data = scene.sable_data.write().unwrap();
@@ -83,13 +93,17 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
 
         let level_collider = LevelCollider::new(Some(id as LevelColliderID), false);
 
-        let collider = ColliderBuilder::new(SharedShape::new(level_collider))
+        let mut collider = ColliderBuilder::new(SharedShape::new(level_collider))
             .friction(0.45)
-            .active_events(ActiveEvents::CONTACT_FORCE_EVENTS)
             .active_hooks(ActiveHooks::MODIFY_SOLVER_CONTACTS)
             .density(0.0)
-            .collision_groups(LEVEL_GROUP)
-            .build();
+            .collision_groups(LEVEL_GROUP);
+
+        if contact_force_events {
+            collider = collider.active_events(ActiveEvents::CONTACT_FORCE_EVENTS);
+        }
+
+        let collider = collider.build();
 
         let collider_handle = sim_data.collider_set.insert_with_parent(
             collider,
@@ -182,6 +196,22 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_set
         //     scene.impulse_joint_set.remove_joints_attached_to_rigid_body(info.static_mount.unwrap());
         // } else {
         let collider = collider.unwrap();
+
+        // Mark the scene dirty only when the wrt pose actually changed beyond
+        // the upload thresholds, so numerically-identical re-uploads don't
+        // defeat the sleep-skip step early-out.
+        let moved = match collider.position_wrt_parent().copied() {
+            Some(old) => {
+                (isometry.translation - old.translation).length_squared()
+                    > KINEMATIC_DIRTY_DISTANCE_THRESHOLD * KINEMATIC_DIRTY_DISTANCE_THRESHOLD
+                    || isometry.rotation.angle_between(old.rotation)
+                        > KINEMATIC_DIRTY_ANGLE_THRESHOLD * KINEMATIC_DIRTY_ANGLE_THRESHOLD
+            }
+            None => true,
+        };
+        if moved {
+            scene.kinematic_dirty.store(true, Ordering::Relaxed);
+        }
 
         collider.set_position_wrt_parent(isometry);
         // }

@@ -2,6 +2,8 @@ package dev.ryanhcode.sable.mixin.biome_projection;
 
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import dev.ryanhcode.sable.SableServerConfig;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.mixinhelpers.biome_projection.SubLevelBiomeProjectionHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -26,6 +28,13 @@ public class BiomeManagerMixin {
     @WrapMethod(method = "getBiome(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/core/Holder;")
     private Holder<Biome> sable$projectBiomeLookup(final BlockPos pos, final Operation<Holder<Biome>> original) {
         if (this.noiseBiomeSource instanceof final Level level) {
+            if (SableServerConfig.SPEC.isLoaded() && SableServerConfig.BIOME_PROJECTION_FAST_PATH.getAsBoolean()) {
+                final SubLevelContainer container = SubLevelContainer.getContainer(level);
+                if (container == null || !container.hasSubLevels()) {
+                    return original.call(pos);
+                }
+            }
+
             return original.call(SubLevelBiomeProjectionHelper.projectOutOfPlot(level, pos));
         }
 

@@ -21,10 +21,11 @@ use rapier3d::glamx::{DQuat, DVec3};
 use std::collections::HashMap;
 use std::io::ErrorKind::BrokenPipe;
 use std::io::{self, Write};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use fern::colors::{Color, ColoredLevelConfig};
-use log::info;
+use log::{info, warn};
 
 use crate::buoyancy::compute_buoyancy;
 use crate::collider::{LevelCollider, update_collider_aabb};
@@ -238,6 +239,14 @@ pub struct PhysicsState {
 
     /// An array of i32 IDs -> block collider entries
     voxel_collider_map: VoxelColliderMap,
+
+    /// Sleep skipping: sleeping bodies are excluded from buoyancy, and the whole
+    /// pipeline step is skipped when no dynamic body is awake.
+    pub sleep_skip: bool,
+
+    /// Whether newly created level colliders are built with
+    /// `ActiveEvents::CONTACT_FORCE_EVENTS`. Existing colliders are not retrofitted.
+    pub contact_force_events: bool,
 }
 
 /// A collision to report to the Java side.
@@ -387,6 +396,8 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ini
                 ..IntegrationParameters::default()
             },
             voxel_collider_map: VoxelColliderMap::new(),
+            sleep_skip: true,
+            contact_force_events: true,
         })
     });
 
@@ -444,6 +455,8 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ini
         current_step_vm,
         gravity: Vec3::new(x as Real, y as Real, z as Real),
         universal_drag: universal_drag as Real,
+        kinematic_dirty: std::sync::atomic::AtomicBool::new(false),
+        nan_origin_warned: std::sync::atomic::AtomicBool::new(false),
         manifold_info_map,
     };
 
@@ -521,6 +534,11 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_handle(handle, |scene| {
             floating_origin::rebase_if_needed(scene);
+            // Must run before every substep: constraints are created with zero
+            // anchors and only get their real frames here, Java-side frame
+            // updates (setConstraintFrame) made during prePhysicsTick land here,
+            // and a rebase above shifts the origin that ground-side anchors
+            // are expressed against.
             rope::tick(scene);
             joints::tick(scene);
 
@@ -531,6 +549,25 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
             let sim = &mut *sim;
 
             let params = get_physics_state();
+
+            // Whole-step early-out: with no awake dynamic body and no recently
+            // moved kinematic contraption the solver cannot change any state;
+            // rebase, rope/joint ticks and manifold cleanup above still run
+            // (new constraints wake their bodies on insert). Uses the body set
+            // directly (not island manager bookkeeping) so a body woken between
+            // steps is seen immediately. kinematic_dirty covers moving
+            // platforms: they only move colliders, which never wakes bodies, so
+            // their contact discovery must not be skipped.
+            if params.sleep_skip
+                && !scene.kinematic_dirty.load(Ordering::Relaxed)
+                && !sim
+                    .rigid_body_set
+                    .iter()
+                    .any(|(_, body)| body.is_dynamic() && !body.is_sleeping())
+            {
+                return;
+            }
+
             let params = &params.integration_parameters;
 
             sim.pipeline.step(
@@ -547,6 +584,10 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
                 &sim.physics_hooks,
                 &sim.event_handler,
             );
+
+            // Cleared only after a step actually ran: a skipped step must keep
+            // the dirty flag so the next substep still executes.
+            scene.kinematic_dirty.store(false, Ordering::Relaxed);
         });
     }));
 
@@ -568,18 +609,60 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_get
         let rb: &RigidBody =
             &sim_data.rigid_body_set[sable_data.rigid_bodies[&(id as LevelColliderID)]];
 
+        // NaN 纵深防御（读侧）：origin 非有限时跳过叠加而不是把 NaN 传给 Java；
+        // 真正的 origin 重置发生在 step 的 rebase_if_needed / writer 路径。
+        let origin = sable_data.origin;
+        let origin = if origin.is_finite() {
+            origin
+        } else {
+            if !scene.nan_origin_warned.swap(true, Ordering::Relaxed) {
+                warn!("getPose: scene origin is non-finite; returning un-offset pose");
+            }
+            DVec3::ZERO
+        };
+
         let arr: [jdouble; 7] = [
-            rb.translation().x as jdouble + sable_data.origin.x,
-            rb.translation().y as jdouble + sable_data.origin.y,
-            rb.translation().z as jdouble + sable_data.origin.z,
+            rb.translation().x as jdouble + origin.x,
+            rb.translation().y as jdouble + origin.y,
+            rb.translation().z as jdouble + origin.z,
             rb.rotation().x as jdouble,
             rb.rotation().y as jdouble,
             rb.rotation().z as jdouble,
             rb.rotation().w as jdouble,
         ];
 
+        if arr.iter().any(|v| !v.is_finite()) {
+            report_non_finite_pose_once(handle, id, rb, &sable_data.origin);
+        }
+
         env.set_double_array_region(&store, 0, &arr).unwrap();
     })
+}
+
+/// 溯源日志：getPose 读出非有限位姿时每 (scene, body) 打一次，拆出 body 的
+/// translation/rotation 与场景 origin，区分 body 本身 NaN 与 origin 被毒化。
+fn report_non_finite_pose_once(handle: jlong, id: jint, rb: &RigidBody, origin: &DVec3) {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static REPORTED: OnceLock<Mutex<HashSet<(jlong, jint)>>> = OnceLock::new();
+    if !REPORTED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap()
+        .insert((handle, id))
+    {
+        return;
+    }
+
+    warn!(
+        "Non-finite pose read for body {} in scene {:#x}: translation={:?} rotation={:?} origin={:?}",
+        id,
+        handle,
+        rb.translation(),
+        rb.rotation(),
+        origin
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -667,6 +750,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
     with_handle(handle, |scene| floating_origin::ensure_origin_near(scene, &w));
 
     with_handle(handle, |scene| {
+        let contact_force_events = get_physics_state().contact_force_events;
         let t = w - scene.sable_data.read().unwrap().origin;
         let mut rigid_body = RigidBodyBuilder::dynamic()
             .ccd_enabled(true)
@@ -688,16 +772,20 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_cre
         let handle = sim_data.rigid_body_set.insert(rigid_body);
 
         // make a level collider
-        let collider = ColliderBuilder::new(SharedShape::new(LevelCollider::new(
+        let mut collider = ColliderBuilder::new(SharedShape::new(LevelCollider::new(
             Some(id as LevelColliderID),
             false,
         )))
         .friction(0.525)
-        .active_events(ActiveEvents::CONTACT_FORCE_EVENTS)
         .active_hooks(ActiveHooks::MODIFY_SOLVER_CONTACTS)
         .density(0.0)
-        .collision_groups(LEVEL_GROUP)
-        .build();
+        .collision_groups(LEVEL_GROUP);
+
+        if contact_force_events {
+            collider = collider.active_events(ActiveEvents::CONTACT_FORCE_EVENTS);
+        }
+
+        let collider = collider.build();
 
         let collider_handle = sim_data.collider_set.insert_with_parent(
             collider,
