@@ -16,16 +16,22 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.material.FluidState;
-import org.jetbrains.annotations.NotNull;
+import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * Speeds up block/fluid state, chunk, and level access with caching and raw access.
+ *
+ * <p>By default a missing server chunk is loaded synchronously, like {@link Level#getChunk}. An
+ * accelerator built with {@code loadMissingChunks = false} never loads: {@link #getChunk} returns
+ * null for a chunk that is not fully loaded, and block/fluid reads there see air. Use that mode on
+ * per-tick server paths, where a synchronous load can stall the server thread for seconds.
  */
 public class LevelAccelerator implements BlockGetter {
     public static final boolean USE_CACHE_MAP = false;
 
     private final Level level;
+    private final boolean loadMissingChunks;
     private long cachedChunkPos = 0L;
     private LevelChunk cachedChunkObj = null;
     private final int minBuildHeight;
@@ -34,7 +40,16 @@ public class LevelAccelerator implements BlockGetter {
     private final Long2ObjectMap<LevelChunk> cachedLevelChunks = new Long2ObjectOpenHashMap<>();
 
     public LevelAccelerator(final Level level) {
+        this(level, true);
+    }
+
+    /**
+     * @param loadMissingChunks whether a server chunk that is not fully loaded is loaded
+     *                          synchronously (true) or treated as absent (false)
+     */
+    public LevelAccelerator(final Level level, final boolean loadMissingChunks) {
         this.level = level;
+        this.loadMissingChunks = loadMissingChunks;
         this.minBuildHeight = level.getMinBuildHeight();
         this.maxBuildHeight = level.getMaxBuildHeight();
         this.minSection = level.getMinSection();
@@ -64,6 +79,9 @@ public class LevelAccelerator implements BlockGetter {
     @Override
     public BlockState getBlockState(final BlockPos pos) {
         final LevelChunk chunk = this.getChunk(pos);
+        if (chunk == null) {
+            return Blocks.AIR.defaultBlockState();
+        }
         return this.getBlockState(chunk, pos);
     }
 
@@ -86,14 +104,30 @@ public class LevelAccelerator implements BlockGetter {
     @Override
     public FluidState getFluidState(final BlockPos pos) {
         final LevelChunk chunk = this.getChunk(pos);
+        if (chunk == null) {
+            return Fluids.EMPTY.defaultFluidState();
+        }
 
         return chunk.getFluidState(pos);
     }
 
+    /**
+     * @return whether the chunk containing the position is available without loading it
+     */
+    public boolean hasChunk(final BlockPos pos) {
+        return this.getChunk(pos) != null;
+    }
+
+    /**
+     * @return the chunk, or null only when this accelerator does not load missing chunks
+     */
     public LevelChunk getChunk(final BlockPos pos) {
         return this.getChunk(pos.getX() >> 4, pos.getZ() >> 4);
     }
 
+    /**
+     * @return the chunk, or null only when this accelerator does not load missing chunks
+     */
     public LevelChunk getChunk(final int chunkX, final int chunkZ) {
         final long pos = ChunkPos.asLong(chunkX, chunkZ);
 
@@ -109,13 +143,18 @@ public class LevelAccelerator implements BlockGetter {
             chunk = this.grabChunkFast(chunkX, chunkZ, pos);
         }
 
+        if (chunk == null) {
+            // Not cached: the chunk may finish loading before the next lookup.
+            return null;
+        }
+
         this.cachedChunkObj = chunk;
         this.cachedChunkPos = pos;
 
         return chunk;
     }
 
-    private @NotNull LevelChunk grabChunkFast(final int chunkX, final int chunkZ, final long pos) {
+    private @Nullable LevelChunk grabChunkFast(final int chunkX, final int chunkZ, final long pos) {
         if (this.level.isClientSide) {
             return this.level.getChunk(chunkX, chunkZ);
         }
@@ -129,7 +168,7 @@ public class LevelAccelerator implements BlockGetter {
                 return res;
         }
 
-        return this.level.getChunk(chunkX, chunkZ);
+        return this.loadMissingChunks ? this.level.getChunk(chunkX, chunkZ) : null;
     }
 
     public boolean isOutsideBuildHeight(final Vec3i pos) {

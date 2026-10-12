@@ -88,7 +88,12 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
 
     public RapierPhysicsPipeline(final ServerLevel level) {
         this.level = level;
-        this.accelerator = new LevelAccelerator(level);
+        // Never loads chunks: section uploads and block changes run on the server thread, and a
+        // neighbor read across a chunk border used to load that chunk synchronously (1.7 s stall
+        // seen when a fluid interaction placed a block next to an unloaded chunk). Blocks in an
+        // unloaded chunk read as air, which only makes neighborhood states more conservative
+        // (face instead of interior); that chunk computes its own states when it is uploaded.
+        this.accelerator = new LevelAccelerator(level, false);
         this.colliderBakery = new RapierVoxelColliderBakery(this.accelerator);
         this.recentCollisions.defaultReturnValue(-1);
         this.poseCache = new double[7];
@@ -340,6 +345,10 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
         // if it's only air, all zeros will do. it'll default to empty neighborhood state and 0 (empty) collider ID
         if (!section.hasOnlyAir()) {
             final LevelChunk chunk = this.accelerator.getChunk(x, z);
+            if (chunk == null) {
+                // Callers upload sections of loaded chunks only; nothing to read if it is gone.
+                return;
+            }
 
             for (int bx = 0; bx < 16; bx++) {
                 for (int bz = 0; bz < 16; bz++) {
@@ -391,8 +400,12 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
 
         for (final Direction dir : Direction.values()) {
             final BlockPos pos = globalBlockPos.relative(dir);
+            if (!this.accelerator.hasChunk(pos)) {
+                // Not uploaded to physics; its states are computed when the chunk loads.
+                continue;
+            }
             final VoxelNeighborhoodState state = VoxelNeighborhoodState.getState(this.accelerator, pos, null);
-            final RapierVoxelColliderData colliderData = this.colliderBakery.getPhysicsDataForBlock(this.level.getBlockState(pos));
+            final RapierVoxelColliderData colliderData = this.colliderBakery.getPhysicsDataForBlock(this.accelerator.getBlockState(pos));
 
             final int colliderValue = colliderData == null ? 0 : colliderData.handle() + 1;
             Rapier3D.changeBlock(this.scene.handle(), pos.getX(), pos.getY(), pos.getZ(), packBlockState(state, colliderValue));
