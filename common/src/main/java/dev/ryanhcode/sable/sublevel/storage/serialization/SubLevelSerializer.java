@@ -38,6 +38,11 @@ public class SubLevelSerializer {
      */
     public static final boolean SUPER_DEBUG_MODE = false;
 
+    /**
+     * Load-time center-of-mass corrections at least this large [m] are logged.
+     */
+    private static final double LOAD_COM_LOG_THRESHOLD = 1.0e-3;
+
     private static @NotNull CompoundTag serialize(final ServerSubLevel subLevel, final List<UUID> dependencies) {
         final CompoundTag tag = new CompoundTag();
         final ServerLevelPlot plot = subLevel.getPlot();
@@ -170,6 +175,27 @@ public class SubLevelSerializer {
         }
 
         final SubLevelPhysicsSystem physicsSystem = plotContainer.physicsSystem();
+
+        // plot.load above recomputed the center of mass from the loaded blocks and already uploaded
+        // it to the physics body. The saved pose is expressed about the center of mass at save time;
+        // if block masses changed since then, applying it unchanged leaves the logical rotation point
+        // and the physics body's center of mass apart, so every collider and joint anchor is
+        // displaced by the difference on the first step. Re-express the saved pose about the
+        // current center of mass instead: blocks keep their saved world positions.
+        // Skipped for degenerate mass data (same rule as MergedMassTracker#uploadData), keeping the saved pose.
+        final Vector3dc loadedCenterOfMass = subLevel.getMassTracker().getCenterOfMass();
+        if (loadedCenterOfMass != null && loadedCenterOfMass.isFinite() && !subLevel.getMassTracker().isInvalid()
+                && Double.isFinite(subLevel.getMassTracker().getMass()) && !loadedCenterOfMass.equals(cor)) {
+            final Vector3d shift = new Vector3d(loadedCenterOfMass).sub(cor);
+            if (shift.lengthSquared() > LOAD_COM_LOG_THRESHOLD * LOAD_COM_LOG_THRESHOLD) {
+                Sable.LOGGER.info("Sub-level {} center of mass moved by {} since it was saved ({} -> {}); keeping its blocks in place",
+                        halfLoadedSubLevel.uuid(), formatVector(shift), formatVector(cor), formatVector(loadedCenterOfMass));
+            }
+            final Vector3d reexpressed = pose.transformPosition(loadedCenterOfMass, new Vector3d());
+            position.set(reexpressed);
+            cor.set(loadedCenterOfMass);
+        }
+
         subLevel.logicalPose().set(pose);
         physicsSystem.getPipeline().teleport(subLevel, position, pose.orientation());
         subLevel.updateLastPose();
@@ -220,5 +246,9 @@ public class SubLevelSerializer {
                 filteredDependencies,
                 tag
         );
+    }
+
+    private static String formatVector(@Nullable final Vector3dc v) {
+        return v == null ? "null" : String.format("(%.6f, %.6f, %.6f)", v.x(), v.y(), v.z());
     }
 }
