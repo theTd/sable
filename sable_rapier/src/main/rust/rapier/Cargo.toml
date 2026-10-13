@@ -24,7 +24,6 @@ rapier3d = { package = "rapier3d-f64", git = "https://github.com/ryanhcode/rapie
     "profiler",
 ] }
 
-rayon = "1.10.0"
 dashmap = "7.0.0-rc2"
 
 [lib]

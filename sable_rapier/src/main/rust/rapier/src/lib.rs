@@ -571,6 +571,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
                     .iter()
                     .any(|(_, body)| body.is_dynamic() && !body.is_sleeping())
             {
+                step_stats::note_skipped_step();
                 return;
             }
 
@@ -610,8 +611,10 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
                 pipeline_started,
                 finished: std::time::Instant::now(),
             };
+            let callbacks = step_stats::take_callbacks();
+            step_stats::record_step(&marks, &sim.pipeline.counters, &callbacks);
             if step_stats::total_millis(&marks) >= step_stats::SLOW_STEP_MILLIS {
-                step_stats::report_slow_step(&marks, &sim.pipeline.counters, || step_stats::SceneSizes {
+                step_stats::report_slow_step(&marks, &sim.pipeline.counters, &callbacks, || step_stats::SceneSizes {
                     bodies: sim.rigid_body_set.len(),
                     awake_dynamic: sim
                         .rigid_body_set

@@ -1,6 +1,6 @@
 use crate::scene::ChunkAccess;
 use crate::{
-    algo::{DEFAULT_COLLISION_PARALLEL_CUTOFF, find_collision_pairs},
+    algo::find_collision_pairs,
     scene::PhysicsScene,
 };
 use marten::Real;
@@ -53,7 +53,6 @@ pub fn compute_buoyancy(scene: &PhysicsScene) {
             None,
             body.position(),
             0.0,
-            DEFAULT_COLLISION_PARALLEL_CUTOFF,
             true,
             &sable_data,
         );

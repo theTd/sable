@@ -5,7 +5,7 @@ use rapier3d::glamx::{DVec3, IVec3};
 use rapier3d::math::Pose3;
 use rapier3d::prelude::ColliderHandle;
 use sable_rapier::ActiveLevelColliderInfo;
-use sable_rapier::algo::{DEFAULT_COLLISION_PARALLEL_CUTOFF, find_collision_pairs};
+use sable_rapier::algo::find_collision_pairs;
 use sable_rapier::joints::SableJointSet;
 use sable_rapier::rope::RopeMap;
 use sable_rapier::scene::SableSceneData;
@@ -78,34 +78,8 @@ fn benchmark_find_collision_pairs(c: &mut Criterion) {
     let sable_data = dummy_sable_data();
     let prediction = 0.0 as Real;
 
-    // for i in 0..100000 {
-    //     let isometry = Isometry3::new(Vector3::new(123.5, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)); // No rotation/translation
-    //     let result = find_collision_pairs(&sable_body_a, Some(&sable_body_b), &isometry, prediction, 256);
-    //     black_box(result);
-    //
-    // }
-    //
-    // if (true){ return;}
-
-    // {
-    //     let mut group = c.benchmark_group("find_pairs_parallel_cutoff");
-    //
-    //     for cutoff in [0, 64, 128, 256, 512, 1024, 2048, 4096].iter() {
-    //         group.throughput(criterion::Throughput::Elements(1));
-    //         group.bench_with_input(criterion::BenchmarkId::from_parameter(cutoff), cutoff, |b, &penetration| {
-    //             let isometry = Isometry3::new(Vector3::new(120.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)); // No rotation/translation
-    //             b.iter(|| {
-    //                 let result = find_collision_pairs(&sable_body_a, Some(&sable_body_b), &isometry, prediction, *cutoff as usize);
-    //                 black_box(result)
-    //             });
-    //         });
-    //     }
-    // }
-    //
-    //
-    // if (true){ return; }
     {
-        let mut group = c.benchmark_group("find_pairs_parallel");
+        let mut group = c.benchmark_group("find_pairs");
 
         for penetration in [0.0, 0.5, 1.0].iter() {
             group.throughput(criterion::Throughput::Elements(1));
@@ -120,7 +94,6 @@ fn benchmark_find_collision_pairs(c: &mut Criterion) {
                             Some(&sable_body_b),
                             &pose,
                             prediction,
-                            DEFAULT_COLLISION_PARALLEL_CUTOFF,
                             false,
                             &sable_data,
                         );
@@ -130,49 +103,6 @@ fn benchmark_find_collision_pairs(c: &mut Criterion) {
             );
         }
     }
-
-    {
-        let mut group = c.benchmark_group("find_pairs_sequential");
-
-        for penetration in [0.0, 0.5, 1.0].iter() {
-            group.throughput(criterion::Throughput::Elements(1));
-            group.bench_with_input(
-                criterion::BenchmarkId::from_parameter(penetration),
-                penetration,
-                |b, &penetration| {
-                    let pose = Pose3::translation(124.25 - penetration * 8.0, 0.0, 0.0);
-                    b.iter(|| {
-                        let result = find_collision_pairs(
-                            &sable_body_a,
-                            Some(&sable_body_b),
-                            &pose,
-                            prediction,
-                            usize::MAX,
-                            false,
-                            &sable_data,
-                        );
-                        black_box(result)
-                    });
-                },
-            );
-        }
-    }
-
-    // criterion_group!(benches, benchmark_find_collision_pairs);
-    // criterion_main!(benches);
-    // c.bench_function("find_collision_pairs_parallel", |b| {
-    //     b.iter(|| {
-    //         let result = find_collision_pairs(&sable_body_a, Some(&sable_body_b), &isometry, prediction);
-    //         black_box(result)
-    //     })
-    // });
-
-    // c.bench_function("find_collision_pairs_sequential", |b| {
-    //     b.iter(|| {
-    //         let result = find_collision_pairs_sequential(&sable_body_a, Some(&sable_body_b), &isometry, prediction);
-    //         black_box(result)
-    //     })
-    // });
 }
 
 criterion_group!(benches, benchmark_find_collision_pairs);

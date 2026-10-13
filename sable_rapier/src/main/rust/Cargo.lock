@@ -1015,7 +1015,6 @@ dependencies = [
  "log",
  "marten",
  "rapier3d-f64",
- "rayon",
 ]
 
 [[package]]

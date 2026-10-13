@@ -483,7 +483,6 @@ impl SableDispatcher {
             collider_info_1,
             pos12,
             prediction,
-            256,
             false,
             &sable_data,
         );
