@@ -12,6 +12,7 @@ mod hooks;
 pub mod joints;
 pub mod rope;
 pub mod scene;
+mod step_probe;
 mod step_stats;
 mod voxel_collider;
 
@@ -479,6 +480,7 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_dis
     handle: jlong,
 ) {
     if handle != 0 {
+        step_probe::forget(handle);
         unsafe {
             drop(Arc::from_raw(handle as *const PhysicsScene));
         }
@@ -574,6 +576,12 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
 
             let params = &params.integration_parameters;
 
+            // Observation-only; inert unless SABLE_STEP_PROBE_FILE is set.
+            let probe = step_probe::begin(handle, sim);
+            if let Some(index) = probe {
+                step_probe::record(handle, index, "pre", params.dt, scene, sim);
+            }
+
             step_stats::begin_pipeline_step();
             let pipeline_started = std::time::Instant::now();
             sim.pipeline.step(
@@ -590,6 +598,10 @@ pub extern "system" fn Java_dev_ryanhcode_sable_physics_impl_rapier_Rapier3D_ste
                 &sim.physics_hooks,
                 &sim.event_handler,
             );
+
+            if let Some(index) = probe {
+                step_probe::record(handle, index, "post", params.dt, scene, sim);
+            }
 
             let marks = step_stats::StepMarks {
                 started,

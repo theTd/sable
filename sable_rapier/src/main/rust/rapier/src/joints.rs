@@ -45,6 +45,30 @@ impl SableJointSet {
             joints: HashMap::new(),
         }
     }
+
+    /// Read-only view of every registered joint, for diagnostics.
+    pub(crate) fn views(&self) -> impl Iterator<Item = JointView> + '_ {
+        self.joints.iter().map(|(java_handle, joint)| JointView {
+            java_handle: *java_handle,
+            id_a: joint.id_a,
+            id_b: joint.id_b,
+            pos_a: joint.pos_a,
+            pos_b: joint.pos_b,
+            rapier_handle: joint.handle,
+            contacts_enabled: joint.contacts_enabled,
+        })
+    }
+}
+
+/// Snapshot of one Sable joint's Java-supplied inputs (see [`SableJointSet::views`]).
+pub(crate) struct JointView {
+    pub java_handle: SableJointHandle,
+    pub id_a: Option<LevelColliderID>,
+    pub id_b: Option<LevelColliderID>,
+    pub pos_a: DVec3,
+    pub pos_b: DVec3,
+    pub rapier_handle: RapierJointHandle,
+    pub contacts_enabled: bool,
 }
 
 fn joint_side_com(
