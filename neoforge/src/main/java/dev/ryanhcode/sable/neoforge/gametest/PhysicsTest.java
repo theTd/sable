@@ -4,6 +4,7 @@ import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
@@ -129,5 +130,62 @@ public final class PhysicsTest {
                     final BlockPos globalPos = BlockPos.containing(position.x(), position.y(), position.z());
                     return new GameTestAssertPosException("Sub-level got stuck", globalPos, helper.relativePos(globalPos), helper.getTick());
                 });
+    }
+
+    /**
+     * Recovery rebuilds the mass tracker and re-adds the body. When the logical rotation point is not the
+     * rebuilt center of mass (e.g. a stale saved one), the blocks must keep their world positions.
+     */
+    @GameTest(template = "gravity")
+    public static void testRecoveryKeepsBlocksInPlace(final GameTestHelper helper) {
+        final ServerLevel level = helper.getLevel();
+        final ServerSubLevelContainer plotContainer = SubLevelContainer.getContainer(level);
+        if (plotContainer == null) {
+            throw new IllegalStateException("Plot container not found in level");
+        }
+
+        final SubLevelPhysicsSystem physicsSystem = plotContainer.physicsSystem();
+        if (physicsSystem == null) {
+            throw new IllegalStateException("Plot container does not have physics");
+        }
+
+        final ServerSubLevel subLevel = spawnSingleBlockSubLevel(plotContainer, absolutePosition(helper, new Vector3d(2.5, 8, 2.5)), Blocks.DIAMOND_BLOCK.defaultBlockState());
+
+        helper.runAfterDelay(2, () -> {
+            final Pose3d pose = subLevel.logicalPose();
+            final Vector3dc centerOfMassValue = subLevel.getMassTracker().getCenterOfMass();
+            if (centerOfMassValue == null) {
+                helper.fail("Sub-level has no center of mass");
+                return;
+            }
+            final Vector3d centerOfMass = new Vector3d(centerOfMassValue);
+
+            // Tilt the body, then express the same placement about a rotation point away from the
+            // center of mass, as a stale saved pose would be.
+            pose.orientation().rotateXYZ(0.2, 0.7, 0.1);
+            physicsSystem.getPipeline().teleport(subLevel, pose.position(), pose.orientation());
+            final Vector3d staleRotationPoint = centerOfMass.add(0.7, -0.3, 0.4, new Vector3d());
+            final Vector3d stalePosition = pose.transformPosition(staleRotationPoint, new Vector3d());
+            pose.position().set(stalePosition);
+            pose.rotationPoint().set(staleRotationPoint);
+
+            final Vector3d expected = pose.transformPosition(centerOfMass, new Vector3d());
+
+            if (!physicsSystem.recoverSubLevel(subLevel)) {
+                helper.fail("Recovery failed");
+                return;
+            }
+
+            final Vector3d logical = subLevel.logicalPose().transformPosition(centerOfMass, new Vector3d());
+            final Pose3d nativePose = physicsSystem.getPipeline().readPose(subLevel, new Pose3d());
+            final BlockPos failPos = helper.relativePos(BlockPos.containing(expected.x, expected.y, expected.z));
+            if (logical.distance(expected) > 1.0e-6) {
+                helper.fail("Recovery moved the blocks: logical center of mass " + logical + " expected " + expected, failPos);
+            }
+            if (nativePose.position().distance(expected) > 1.0e-6) {
+                helper.fail("Physics body ended up at " + nativePose.position() + " expected " + expected, failPos);
+            }
+            helper.succeed();
+        });
     }
 }

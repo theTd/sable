@@ -461,13 +461,25 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
             }
 
             serverSubLevel.buildMassTracker();
+            // add() re-centres the rotation point on the rebuilt center of mass without moving the body
+            final Pose3d poseBeforeAdd = new Pose3d(logicalPose);
             this.pipeline.add(serverSubLevel, logicalPose);
 
-            if (serverSubLevel.getMassTracker().getCenterOfMass() == null) {
+            final Vector3dc rebuiltCenterOfMass = serverSubLevel.getMassTracker().getCenterOfMass();
+            if (rebuiltCenterOfMass == null) {
                 // there's no center of mass for the body, which means it's effectively removed
                 Sable.LOGGER.info("Sub-level recovery added sub-level to pipeline, but center of mass is null. Aborting and removing sub-level.");
                 SubLevelContainer.getContainer(this.level).removeSubLevel(serverSubLevel, SubLevelRemovalReason.REMOVED);
                 return false;
+            }
+
+            // Keep the blocks where they were: put the rebuilt center of mass at its world position
+            // under the pose the sub-level had before recovery.
+            if (rebuiltCenterOfMass.isFinite() && !rebuiltCenterOfMass.equals(poseBeforeAdd.rotationPoint())) {
+                final Vector3d position = poseBeforeAdd.transformPosition(rebuiltCenterOfMass, new Vector3d());
+                logicalPose.position().set(position);
+                logicalPose.rotationPoint().set(rebuiltCenterOfMass);
+                this.pipeline.teleport(serverSubLevel, position, logicalPose.orientation());
             }
 
             final ServerLevelPlot plot = serverSubLevel.getPlot();
