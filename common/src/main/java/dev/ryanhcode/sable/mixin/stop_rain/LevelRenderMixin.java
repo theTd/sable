@@ -44,7 +44,10 @@ public class LevelRenderMixin {
                 checkingPos.sub(localUp);
 
                 final BlockState gatheredState = accelerator.getBlockState(mutableBlockPos.set(checkingPos.x, checkingPos.y, checkingPos.z));
-                if (gatheredState.blocksMotion() || !gatheredState.getFluidState().isEmpty()) {
+                // 薄顶也挡雨：原版谓词 blocksMotion 只看碰撞厚度（半砖/伪装板/活板门为 false），
+                // 车厢单层薄顶会漏雨；放宽为「碰撞形状非空」即遮挡（与原版地面行为刻意分叉）
+                if (gatheredState.blocksMotion() || !gatheredState.getFluidState().isEmpty()
+                        || !gatheredState.getCollisionShape(accelerator, mutableBlockPos).isEmpty()) {
                     subLevel.logicalPose().transformPosition(checkingPos);
                     maxHeight = (int) Math.max(maxHeight, checkingPos.y + yOffset);
                     break;
