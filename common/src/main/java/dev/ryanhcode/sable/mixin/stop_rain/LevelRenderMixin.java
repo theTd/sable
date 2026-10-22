@@ -40,9 +40,12 @@ public class LevelRenderMixin {
             subLevel.logicalPose().transformNormalInverse(localUp.set(0, 1, 0));
 
             final double checkingDistance = subLevel.boundingBox().maxY() - subLevel.boundingBox().minY();
-            for (int i = 0; i < checkingDistance; i++) {
-                checkingPos.sub(localUp);
-
+            // 先采样后步进（2026-10-22 修复单层车顶漏雨）：入口点是世界 AABB 顶面逆变换回来的
+            // 局部坐标，水平载具上数学值恰好是顶面平面 R+1，浮点回绕 δ<0 时旧写法（先步进）
+            // 第一跳直接落到 R-1，把单层车顶整块跳过。先采样时 floor(R+1+δ) 只会是 R+1（空气，
+            // 多耗一次迭代）或 R（命中车顶），两种舍入符号都收敛到车顶；循环上限 +1 保持探测
+            // 深度不变（仍能扫到地板）。
+            for (int i = 0; i < checkingDistance + 1; i++) {
                 final BlockState gatheredState = accelerator.getBlockState(mutableBlockPos.set(checkingPos.x, checkingPos.y, checkingPos.z));
                 // 薄顶也挡雨：原版谓词 blocksMotion 只看碰撞厚度（半砖/伪装板/活板门为 false），
                 // 车厢单层薄顶会漏雨；放宽为「碰撞形状非空」即遮挡（与原版地面行为刻意分叉）
@@ -52,6 +55,7 @@ public class LevelRenderMixin {
                     maxHeight = (int) Math.max(maxHeight, checkingPos.y + yOffset);
                     break;
                 }
+                checkingPos.sub(localUp);
             }
         }
 
